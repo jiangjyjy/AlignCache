@@ -3138,6 +3138,61 @@ def _allow_local_t5_pretrained(cfg) -> None:
             available_models.append(candidate)
 
 
+def _find_local_pixart_vae(cfg) -> str | None:
+    candidates: list[Path] = []
+    env_path = os.getenv("VBENCH_OPENSORA_PIXART_VAE_PATH")
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+
+    checkpoints_root = os.getenv("VBENCH_CHECKPOINTS_DIR")
+    if checkpoints_root:
+        candidates.append(Path(checkpoints_root).expanduser() / "pixart_sigma_sdxlvae_T5_diffusers")
+
+    vae_cfg = cfg.get("vae", {})
+    if hasattr(vae_cfg, "get"):
+        vae_source = vae_cfg.get("from_pretrained")
+        if vae_source not in (None, ""):
+            source_path = Path(str(vae_source)).expanduser()
+            if source_path.exists():
+                candidates.extend(
+                    [
+                        source_path / "pixart_sigma_sdxlvae_T5_diffusers",
+                        source_path.parent / "pixart_sigma_sdxlvae_T5_diffusers",
+                    ]
+                )
+
+    candidates.append(Path.cwd() / "checkpoints" / "pixart_sigma_sdxlvae_T5_diffusers")
+    candidates.append(Path.cwd().parent / "VBench-exp" / "checkpoints" / "pixart_sigma_sdxlvae_T5_diffusers")
+
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if (resolved / "vae" / "config.json").is_file():
+            return str(resolved)
+    return None
+
+
+def _allow_local_pixart_vae(cfg) -> None:
+    local_pixart_vae = _find_local_pixart_vae(cfg)
+    if local_pixart_vae is None:
+        return
+
+    from opensora.models.vae import vae as vae_module
+
+    target_cls = getattr(vae_module, "VideoAutoencoderKL", None)
+    if target_cls is None or getattr(target_cls, "_aligncache_local_pixart_patch", False):
+        return
+
+    original_init = target_cls.__init__
+
+    def _init_with_local_pixart(self, from_pretrained=None, *args, **kwargs):
+        if from_pretrained == "PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers":
+            from_pretrained = local_pixart_vae
+        return original_init(self, from_pretrained=from_pretrained, *args, **kwargs)
+
+    target_cls.__init__ = _init_with_local_pixart
+    target_cls._aligncache_local_pixart_patch = True
+
+
 def _build_method_config(parsed: argparse.Namespace) -> dict[str, object]:
     method_config: dict[str, object] = {
         "feedback_enabled": True,
@@ -3161,6 +3216,7 @@ def main() -> None:
     aligncache_args, remaining_argv = _parse_aligncache_args()
     cfg = _load_cfg(remaining_argv)
     _allow_local_t5_pretrained(cfg)
+    _allow_local_pixart_vae(cfg)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     cfg_dtype = cfg.get("dtype", "fp32")
