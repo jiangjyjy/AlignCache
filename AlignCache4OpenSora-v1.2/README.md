@@ -40,3 +40,5 @@ This `aligncache` script is the feedback-enabled AlignCache variant, renamed to 
 - `--ratio-ema-decay`
 - `--ratio-clip-low`
 - `--ratio-clip-high`
+
+The script uses the OpenSora defaults from the VBench AlignCache backend: `--base-thresh 0.11`, `--warmup-pairs 8`, OpenSora-specific phase scaling, and pred-sigma auxiliary channel handling.

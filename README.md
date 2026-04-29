@@ -29,4 +29,8 @@ The goal is to keep each model family in its own directory with a single standal
 
 This repository follows the same broad organization as EasyCache: one directory per model family, each with its own README and one standalone AlignCache entry script. In this repository, the public `aligncache` method corresponds to the feedback-enabled AlignCache variant, but it is exposed simply as `aligncache`.
 
+## Implementation note
+
+The standalone scripts mirror the AlignCache runtime used in the VBench experiment code for HunyuanVideo, OpenSora v1.2, and Wan2.1 T2V. Defaults are taken from the VBench-exp experiment templates, using incremental experiment values where an AlignCache incremental experiment exists.
+
 See each model directory README for concrete commands.

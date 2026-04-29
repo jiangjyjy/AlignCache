@@ -1,61 +1,30 @@
 from __future__ import annotations
 
 import types
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import torch
 
 
+_WAN_SUPPORTED_TASKS = frozenset({"t2v-1.3B", "t2v-14B"})
 _PHASES = ("early", "mid", "late")
 
-_ALIGNCACHE_DEFAULT_PHASE_THRESHOLD_SCALES = {
-    "early": 1.0,
-    "mid": 1.0,
-    "late": 1.0,
-}
-_ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES = {
-    "early": 1.15,
-    "mid": 1.0,
-    "late": 0.8,
-}
-_ALIGNCACHE_DEFAULT_AGE_CAP = {
-    "early": 5,
-    "mid": 4,
-    "late": 3,
-}
-_ALIGNCACHE_DEFAULT_SCALE_INIT = {
-    "early": 1.0,
-    "mid": 1.0,
-    "late": 1.0,
-}
-_ALIGNCACHE_DEFAULT_SCALE_LOW = {
-    "early": 0.95,
-    "mid": 0.90,
-    "late": 0.85,
-}
-_ALIGNCACHE_DEFAULT_SCALE_HIGH = {
-    "early": 1.03,
-    "mid": 1.06,
-    "late": 1.0,
-}
-_ALIGNCACHE_DEFAULTS = {
-    "ratio_ema_decay": 0.90,
-    "ratio_clip_low": 0.85,
-    "ratio_clip_high": 1.25,
-    "score_eps": 1e-6,
-}
-_ALIGNCACHE_PHASE_SCALE_PROFILES = {
-    "alignbase": dict(_ALIGNCACHE_DEFAULT_PHASE_THRESHOLD_SCALES),
-    "balanced": dict(_ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES),
-}
-_ALIGNCACHE_REASON_SUMMARY_KEYS = {
-    "warmup_tail": "warmup_tail_pairs",
-    "bootstrap": "bootstrap_pairs",
-    "max_age": "max_age_pairs",
-    "budget_exact": "budget_exact_pairs",
-    "budget_skip": "budget_skip_pairs",
-    "cache_miss_exact": "cache_miss_exact_pairs",
-}
+_ALIGNCACHE_DEFAULT_AGE_CAP = {"early": 5, "mid": 4, "late": 3}
+_ALIGNCACHE_DEFAULT_SCALE_INIT = {"early": 1.0, "mid": 1.0, "late": 1.0}
+_ALIGNCACHE_DEFAULT_SCALE_LOW = {"early": 0.95, "mid": 0.90, "late": 0.85}
+_ALIGNCACHE_DEFAULT_SCALE_HIGH = {"early": 1.03, "mid": 1.06, "late": 1.00}
+_ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES = {"early": 1.15, "mid": 1.00, "late": 0.80}
+_HUNYUAN_ALIGNCACHE_AGE_CAP = {"early": 6, "mid": 6, "late": 6}
+_HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 1.05, "mid": 1.20, "late": 1.35}
+_HUNYUAN_ALIGNCACHE_SCALE_INIT = {"early": 1.00, "mid": 1.00, "late": 1.00}
+_HUNYUAN_ALIGNCACHE_SCALE_LOW = {"early": 0.95, "mid": 0.90, "late": 0.85}
+_HUNYUAN_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.06, "late": 1.00}
+_HUNYUAN_ALIGNCACHE_V2_DEFAULTS = {"early_end_ratio": 0.18, "late_start_ratio": 0.72}
+_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 0.95, "mid": 1.15, "late": 1.00}
+_OPENSORA_ALIGNCACHE_AGE_CAP = {"early": 5, "mid": 5, "late": 4}
+_OPENSORA_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.10, "late": 1.05}
+
 _ALIGNCACHE_V2_DEFAULTS = {
     "enable": True,
     "early_end_ratio": 0.15,
@@ -88,8 +57,17 @@ _ALIGNCACHE_V2_DEFAULTS = {
     "b2_blend_late": 0.20,
     "b2_disagree_rel_cap_mid": 0.0200,
     "b2_disagree_rel_cap_late": 0.0600,
+    "aggressiveness": 0.0,
 }
-_WAN_SUPPORTED_TASKS = frozenset({"t2v-1.3B", "t2v-14B"})
+
+_ALIGNCACHE_REASON_SUMMARY_KEYS = {
+    "warmup_tail": "warmup_tail_pairs",
+    "bootstrap": "bootstrap_pairs",
+    "max_age": "max_age_pairs",
+    "budget_exact": "budget_exact_pairs",
+    "budget_skip": "budget_skip_pairs",
+    "cache_miss_exact": "cache_miss_exact_pairs",
+}
 
 
 def _coerce_optional_bool(value: Any, *, label: str) -> bool | None:
@@ -124,209 +102,179 @@ def _coerce_optional_int(value: Any, *, label: str) -> int | None:
         raise ValueError(f"{label} must be an integer when provided. Received {value!r}.") from exc
 
 
+def _coerce_optional_str(value: Any, *, label: str) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        return value.strip()
+    raise ValueError(f"{label} must be a string when provided. Received {value!r}.")
+
+
 def _clamp_float(value: float, low: float, high: float) -> float:
     return max(float(low), min(float(high), float(value)))
 
 
-def _coerce_optional_str(value: Any, *, label: str) -> str | None:
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    if not text:
-        raise ValueError(f"{label} must be a non-empty string when provided.")
-    return text
-
-
 def _resolve_phase_mapping(
     defaults: dict[str, Any],
-    override: dict[str, Any] | None,
-    caster,
+    overrides: dict[str, Any] | None = None,
+    caster=float,
+) -> dict[str, Any]:
+    resolved = {phase: caster(defaults[phase]) for phase in _PHASES}
+    for phase in _PHASES:
+        if overrides is None:
+            continue
+        value = overrides.get(phase)
+        if value is not None:
+            resolved[phase] = caster(value)
+    return resolved
+
+
+def _phase_mapping_from_flat_keys(
+    raw: dict[str, Any],
+    *,
+    mapping_keys: dict[str, str],
+    label_prefix: str,
+    caster=float,
 ) -> dict[str, Any]:
     resolved: dict[str, Any] = {}
-    source = dict(override or {})
-    for phase in _PHASES:
-        value = source.get(phase, defaults[phase])
+    for phase, key in mapping_keys.items():
+        value = raw.get(key)
+        if value in (None, ""):
+            continue
         resolved[phase] = caster(value)
     return resolved
 
 
-def _phase_mapping_from_flat_keys(raw: dict[str, Any], prefix: str, caster) -> dict[str, Any] | None:
-    resolved: dict[str, Any] = {}
-    for phase in _PHASES:
-        key = f"{prefix}_{phase}"
-        if raw.get(key) is None:
-            continue
-        resolved[phase] = caster(raw[key])
-    return resolved or None
-
-
-def _normalize_aligncache_method_config(raw: dict[str, Any] | None) -> dict[str, Any]:
-    normalized = dict(raw or {})
-
-    def _alias(preferred: str, legacy: str) -> None:
-        value = normalized.get(preferred)
-        if value not in (None, ""):
-            normalized[legacy] = value
-
-    _alias("base_thresh", "cache_thresh")
-    _alias("warmup_pairs", "cache_ret_steps")
-    _alias("base_phase_scale_profile", "phase_scale_profile")
-    if normalized.get("phase_threshold_scales") in (None, "") and isinstance(
-        normalized.get("base_phase_threshold_scales"), dict
-    ):
-        normalized["phase_threshold_scales"] = dict(normalized["base_phase_threshold_scales"])
-
-    for label in ("ratio_ema_decay", "ratio_clip_low", "ratio_clip_high"):
-        _alias(f"fb_{label}", f"fb2_{label}")
-
-    for phase in _PHASES:
-        _alias(f"fb_age_cap_{phase}", f"fb2_age_cap_{phase}")
-        _alias(f"fb_scale_init_{phase}", f"fb2_scale_init_{phase}")
-        _alias(f"fb_scale_low_{phase}", f"fb2_scale_low_{phase}")
-        _alias(f"fb_scale_high_{phase}", f"fb2_scale_high_{phase}")
-
-    for label in ("age_cap", "scale_init", "scale_low", "scale_high"):
-        _alias(f"fb_{label}", f"fb2_{label}")
-
-    pair_aliases = {
-        "pair_enable": "v2_enable",
-        "pair_aggr": "v2_aggressiveness",
-        "pair_early_end_ratio": "v2_early_end_ratio",
-        "pair_late_start_ratio": "v2_late_start_ratio",
-        "pair_second_order": "v2_use_second_order",
-        "pair_online_scale": "v2_use_online_scale",
-        "pair_stride": "v2_subsample_stride",
-        "pair_ratio_ema": "v2_ratio_ema_decay",
-        "pair_dir_ema": "v2_dir_ema_decay",
-        "pair_beta_mid": "v2_beta_mid",
-        "pair_beta_late": "v2_beta_late",
-        "pair_ratio_tol_mid": "v2_ratio_tol_mid",
-        "pair_ratio_tol_late": "v2_ratio_tol_late",
-        "pair_dir_min_mid": "v2_dir_min_mid",
-        "pair_dir_min_late": "v2_dir_min_late",
-        "pair_scale_ema": "v2_scale_ema_decay",
-        "pair_scale_low": "v2_scale_clamp_low",
-        "pair_scale_high": "v2_scale_clamp_high",
-        "anchor_enable": "v2_b2_enable",
-        "anchor_exact_early": "v2_b2_exact_early",
-        "anchor_age_mid": "v2_b2_max_pred_age_mid",
-        "anchor_age_late": "v2_b2_max_pred_age_late",
-        "anchor_cond_cap_mid": "v2_b2_cond_rel_cap_mid",
-        "anchor_cond_cap_late": "v2_b2_cond_rel_cap_late",
-        "anchor_alpha_early": "v2_b2_alpha_prior_early",
-        "anchor_alpha_mid": "v2_b2_alpha_prior_mid",
-        "anchor_alpha_late": "v2_b2_alpha_prior_late",
-        "anchor_alpha_ema": "v2_b2_alpha_ema_decay",
-        "anchor_blend_mid": "v2_b2_blend_mid",
-        "anchor_blend_late": "v2_b2_blend_late",
-        "anchor_diff_cap_mid": "v2_b2_disagree_rel_cap_mid",
-        "anchor_diff_cap_late": "v2_b2_disagree_rel_cap_late",
-    }
-    for preferred, legacy in pair_aliases.items():
-        _alias(preferred, legacy)
-    return normalized
-
-
-def _resolved_ret_steps(
+def _resolve_phase_override_mapping(
     raw: dict[str, Any],
     *,
+    nested_key: str,
+    flat_mapping_keys: dict[str, str],
     label_prefix: str,
-    sample_steps: int,
-    default_ret_steps: int | None = None,
-) -> int:
-    ret_steps = _coerce_optional_int(
-        raw.get("warmup_pairs", raw.get("cache_ret_steps", raw.get("ret_steps"))),
-        label=f"{label_prefix}.warmup_pairs",
+    caster=float,
+) -> dict[str, Any]:
+    resolved: dict[str, Any] = {}
+    nested = raw.get(nested_key)
+    if isinstance(nested, dict):
+        for phase, value in dict(nested).items():
+            if value in (None, ""):
+                continue
+            resolved[str(phase)] = caster(value)
+    resolved.update(
+        _phase_mapping_from_flat_keys(
+            raw,
+            mapping_keys=flat_mapping_keys,
+            label_prefix=label_prefix,
+            caster=caster,
+        )
     )
-    if ret_steps is not None:
-        if ret_steps < 0:
-            raise ValueError(f"{label_prefix}.warmup_pairs must be non-negative. Received {ret_steps!r}.")
-        return int(ret_steps)
-    if default_ret_steps is not None:
-        return int(default_ret_steps)
-    return 8 if int(sample_steps) <= 30 else 10
-
-
-def _resolved_base_thresh(raw: dict[str, Any], *, label_prefix: str, default: float) -> float:
-    thresh = _coerce_optional_float(
-        raw.get("base_thresh", raw.get("cache_thresh", raw.get("aligncache_thresh", raw.get("thresh", raw.get("threshold"))))),
-        label=f"{label_prefix}.base_thresh",
-    )
-    resolved = float(default if thresh is None else thresh)
-    if resolved < 0.0:
-        raise ValueError(f"{label_prefix}.base_thresh must be non-negative. Received {resolved!r}.")
     return resolved
 
 
-def _resolve_phase_thresholds(
-    *,
-    base_thresh: float,
-    raw: dict[str, Any],
-    label_prefix: str,
-    default_phase_threshold_scales: dict[str, float] | None = None,
-    default_phase_scale_profile: str | None = None,
-) -> tuple[dict[str, float], dict[str, float], str | None]:
-    explicit_thresholds = raw.get("phase_thresholds")
-    if not isinstance(explicit_thresholds, dict):
-        explicit_thresholds = _phase_mapping_from_flat_keys(raw, "phase_thresh", float)
-    phase_scale_profile = _coerce_optional_str(
-        raw.get("phase_scale_profile"),
-        label=f"{label_prefix}.phase_scale_profile",
+def _normalize_aligncache_method_config(method_config: dict[str, Any] | None) -> dict[str, Any]:
+    raw = dict(method_config or {})
+    nested = raw.get("aligncache")
+    if isinstance(nested, dict):
+        merged = dict(raw)
+        merged.pop("aligncache", None)
+        merged.update(nested)
+        raw = merged
+    return raw
+
+
+def _apply_v2_aggressiveness(cfg: dict[str, Any]) -> dict[str, Any]:
+    resolved = dict(cfg)
+    aggressiveness = float(resolved.get("aggressiveness") or 0.0)
+    if abs(aggressiveness) <= 1e-8:
+        return resolved
+    beta_scale = _clamp_float(1.0 + 0.60 * aggressiveness, 0.50, 1.35)
+    blend_scale = _clamp_float(1.0 + 0.50 * aggressiveness, 0.50, 1.40)
+    clamp_delta = 0.08 * aggressiveness
+    resolved["beta_mid"] = float(resolved["beta_mid"]) * beta_scale
+    resolved["beta_late"] = float(resolved["beta_late"]) * beta_scale
+    resolved["b2_blend_mid"] = float(resolved["b2_blend_mid"]) * blend_scale
+    resolved["b2_blend_late"] = float(resolved["b2_blend_late"]) * blend_scale
+    resolved["scale_clamp_low"] = max(0.60, float(resolved["scale_clamp_low"]) - clamp_delta)
+    resolved["scale_clamp_high"] = max(
+        float(resolved["scale_clamp_low"]),
+        float(resolved["scale_clamp_high"]) + clamp_delta,
     )
-    resolved_profile = None if phase_scale_profile is None else phase_scale_profile.lower()
-    if resolved_profile is None and default_phase_scale_profile not in (None, ""):
-        resolved_profile = str(default_phase_scale_profile).strip().lower()
-    profile_scales = None
-    if resolved_profile is not None:
-        profile_scales = _ALIGNCACHE_PHASE_SCALE_PROFILES.get(resolved_profile)
-        if profile_scales is None:
-            supported = ", ".join(sorted(_ALIGNCACHE_PHASE_SCALE_PROFILES))
-            raise ValueError(
-                f"{label_prefix}.phase_scale_profile must be one of {supported}. "
-                f"Received {phase_scale_profile!r}."
-            )
-    explicit_scales = raw.get("phase_threshold_scales")
-    if not isinstance(explicit_scales, dict):
-        explicit_scales = raw.get("base_phase_threshold_scales")
-    if not isinstance(explicit_scales, dict):
-        explicit_scales = _phase_mapping_from_flat_keys(raw, "phase_scale", float)
-    if explicit_scales is None and profile_scales is not None:
-        explicit_scales = dict(profile_scales)
-    resolved_scales = _resolve_phase_mapping(
-        dict(default_phase_threshold_scales or _ALIGNCACHE_DEFAULT_PHASE_THRESHOLD_SCALES),
-        explicit_scales,
-        float,
-    )
-    resolved_thresholds: dict[str, float] = {}
-    for phase in _PHASES:
-        explicit_value = None if explicit_thresholds is None else explicit_thresholds.get(phase)
-        if explicit_value is None:
-            explicit_value = float(base_thresh) * float(resolved_scales[phase])
-        resolved_thresholds[phase] = float(explicit_value)
-    return resolved_thresholds, resolved_scales, resolved_profile
+    return resolved
+
+
+def _coerce_aligncache_v2_cfg_input(value: Any) -> dict[str, Any]:
+    source = dict(value or {})
+    resolved = dict(_ALIGNCACHE_V2_DEFAULTS)
+    alias_map = {
+        "enable": ("enable", "pair_enable"),
+        "early_end_ratio": ("early_end_ratio", "pair_early_end_ratio"),
+        "late_start_ratio": ("late_start_ratio", "pair_late_start_ratio"),
+        "subsample_stride": ("subsample_stride", "pair_stride"),
+        "qc_ratio_ema_decay": ("qc_ratio_ema_decay", "pair_ratio_ema"),
+        "qc_dir_ema_decay": ("qc_dir_ema_decay", "pair_dir_ema"),
+        "beta_mid": ("beta_mid", "pair_beta_mid"),
+        "beta_late": ("beta_late", "pair_beta_late"),
+        "ratio_tol_mid": ("ratio_tol_mid", "pair_ratio_tol_mid"),
+        "ratio_tol_late": ("ratio_tol_late", "pair_ratio_tol_late"),
+        "dir_min_mid": ("dir_min_mid", "pair_dir_min_mid"),
+        "dir_min_late": ("dir_min_late", "pair_dir_min_late"),
+        "use_second_order": ("use_second_order", "pair_second_order"),
+        "use_online_scale": ("use_online_scale", "pair_online_scale"),
+        "scale_ema_decay": ("scale_ema_decay", "pair_scale_ema"),
+        "scale_clamp_low": ("scale_clamp_low", "pair_scale_low"),
+        "scale_clamp_high": ("scale_clamp_high", "pair_scale_high"),
+        "b2_enable": ("b2_enable", "anchor_enable"),
+        "b2_exact_early": ("b2_exact_early", "anchor_exact_early"),
+        "b2_max_pred_age_mid": ("b2_max_pred_age_mid", "anchor_age_mid"),
+        "b2_max_pred_age_late": ("b2_max_pred_age_late", "anchor_age_late"),
+        "b2_cond_rel_cap_mid": ("b2_cond_rel_cap_mid", "anchor_cond_cap_mid"),
+        "b2_cond_rel_cap_late": ("b2_cond_rel_cap_late", "anchor_cond_cap_late"),
+        "b2_alpha_prior_early": ("b2_alpha_prior_early", "anchor_alpha_early"),
+        "b2_alpha_prior_mid": ("b2_alpha_prior_mid", "anchor_alpha_mid"),
+        "b2_alpha_prior_late": ("b2_alpha_prior_late", "anchor_alpha_late"),
+        "b2_alpha_ema_decay": ("b2_alpha_ema_decay", "anchor_alpha_ema"),
+        "b2_blend_mid": ("b2_blend_mid", "anchor_blend_mid"),
+        "b2_blend_late": ("b2_blend_late", "anchor_blend_late"),
+        "b2_disagree_rel_cap_mid": ("b2_disagree_rel_cap_mid", "anchor_diff_cap_mid"),
+        "b2_disagree_rel_cap_late": ("b2_disagree_rel_cap_late", "anchor_diff_cap_late"),
+        "aggressiveness": ("aggressiveness", "pair_aggr"),
+    }
+    for key, aliases in alias_map.items():
+        value_found = None
+        for alias in aliases:
+            if alias in source and source[alias] not in (None, ""):
+                value_found = source[alias]
+                break
+        if value_found in (None, ""):
+            continue
+        if isinstance(_ALIGNCACHE_V2_DEFAULTS[key], bool):
+            resolved[key] = bool(_coerce_optional_bool(value_found, label=f"aligncache.v2.{key}"))
+        elif isinstance(_ALIGNCACHE_V2_DEFAULTS[key], int):
+            resolved[key] = int(_coerce_optional_int(value_found, label=f"aligncache.v2.{key}"))
+        else:
+            resolved[key] = float(_coerce_optional_float(value_found, label=f"aligncache.v2.{key}"))
+    return _apply_v2_aggressiveness(resolved)
 
 
 def _pair_cfg_from_v2_cfg(v2_cfg: dict[str, Any]) -> dict[str, Any]:
     return {
-        "pair_enable": bool(v2_cfg["enable"]),
         "enable": bool(v2_cfg["enable"]),
-        "pair_aggr": float(v2_cfg["aggressiveness"]),
-        "pair_second_order": bool(v2_cfg["use_second_order"]),
-        "pair_online_scale": bool(v2_cfg["use_online_scale"]),
-        "pair_stride": int(v2_cfg["subsample_stride"]),
-        "pair_ratio_ema": float(v2_cfg["qc_ratio_ema_decay"]),
-        "pair_dir_ema": float(v2_cfg["qc_dir_ema_decay"]),
-        "pair_beta_mid": float(v2_cfg["beta_mid"]),
-        "pair_beta_late": float(v2_cfg["beta_late"]),
-        "pair_ratio_tol_mid": float(v2_cfg["ratio_tol_mid"]),
-        "pair_ratio_tol_late": float(v2_cfg["ratio_tol_late"]),
-        "pair_dir_min_mid": float(v2_cfg["dir_min_mid"]),
-        "pair_dir_min_late": float(v2_cfg["dir_min_late"]),
-        "pair_scale_ema": float(v2_cfg["scale_ema_decay"]),
-        "pair_scale_low": float(v2_cfg["scale_clamp_low"]),
-        "pair_scale_high": float(v2_cfg["scale_clamp_high"]),
-        "pair_early_end_ratio": float(v2_cfg["early_end_ratio"]),
-        "pair_late_start_ratio": float(v2_cfg["late_start_ratio"]),
+        "early_end_ratio": float(v2_cfg["early_end_ratio"]),
+        "late_start_ratio": float(v2_cfg["late_start_ratio"]),
+        "stride": int(v2_cfg["subsample_stride"]),
+        "ratio_ema": float(v2_cfg["qc_ratio_ema_decay"]),
+        "dir_ema": float(v2_cfg["qc_dir_ema_decay"]),
+        "beta_mid": float(v2_cfg["beta_mid"]),
+        "beta_late": float(v2_cfg["beta_late"]),
+        "ratio_tol_mid": float(v2_cfg["ratio_tol_mid"]),
+        "ratio_tol_late": float(v2_cfg["ratio_tol_late"]),
+        "dir_min_mid": float(v2_cfg["dir_min_mid"]),
+        "dir_min_late": float(v2_cfg["dir_min_late"]),
+        "second_order": bool(v2_cfg["use_second_order"]),
+        "online_scale": bool(v2_cfg["use_online_scale"]),
+        "scale_ema": float(v2_cfg["scale_ema_decay"]),
+        "scale_low": float(v2_cfg["scale_clamp_low"]),
+        "scale_high": float(v2_cfg["scale_clamp_high"]),
         "anchor_enable": bool(v2_cfg["b2_enable"]),
         "anchor_exact_early": bool(v2_cfg["b2_exact_early"]),
         "anchor_age_mid": int(v2_cfg["b2_max_pred_age_mid"]),
@@ -344,104 +292,59 @@ def _pair_cfg_from_v2_cfg(v2_cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _coerce_aligncache_v2_cfg_input(cfg: dict[str, Any] | None) -> dict[str, Any]:
-    raw = _normalize_aligncache_method_config(dict(cfg or {}))
-    if "subsample_stride" in raw:
-        return raw
-    return _resolve_aligncache_v2_cfg(raw, label_prefix="aligncache.pair_cfg")
-
-
-def _apply_v2_aggressiveness(cfg: dict[str, Any], aggressiveness: float) -> dict[str, Any]:
-    tuned = dict(cfg)
-    aggressiveness = float(aggressiveness)
-    beta_scale = _clamp_float(1.0 + 0.60 * aggressiveness, 0.50, 1.35)
-    blend_scale = _clamp_float(1.0 + 0.50 * aggressiveness, 0.50, 1.40)
-    clamp_delta = 0.08 * aggressiveness
-    tuned["beta_mid"] = float(tuned["beta_mid"]) * beta_scale
-    tuned["beta_late"] = float(tuned["beta_late"]) * beta_scale
-    tuned["b2_blend_mid"] = float(tuned["b2_blend_mid"]) * blend_scale
-    tuned["b2_blend_late"] = float(tuned["b2_blend_late"]) * blend_scale
-    tuned["scale_clamp_low"] = max(0.60, float(tuned["scale_clamp_low"]) - clamp_delta)
-    tuned["scale_clamp_high"] = max(float(tuned["scale_clamp_low"]), float(tuned["scale_clamp_high"]) + clamp_delta)
-    return tuned
-
-
-def _resolve_aligncache_v2_cfg(raw: dict[str, Any], *, label_prefix: str) -> dict[str, Any]:
-    resolved = dict(_ALIGNCACHE_V2_DEFAULTS)
-    bool_keys = {
-        "pair_enable": ("enable", "v2_enable"),
-        "pair_second_order": ("use_second_order", "v2_use_second_order"),
-        "pair_online_scale": ("use_online_scale", "v2_use_online_scale"),
-        "anchor_enable": ("b2_enable", "v2_b2_enable"),
-        "anchor_exact_early": ("b2_exact_early", "v2_b2_exact_early"),
-    }
-    int_keys = {
-        "pair_stride": ("subsample_stride", "v2_subsample_stride"),
-        "anchor_age_mid": ("b2_max_pred_age_mid", "v2_b2_max_pred_age_mid"),
-        "anchor_age_late": ("b2_max_pred_age_late", "v2_b2_max_pred_age_late"),
-    }
-    float_keys = {
-        "pair_aggr": ("aggressiveness", "v2_aggressiveness"),
-        "pair_early_end_ratio": ("early_end_ratio", "v2_early_end_ratio"),
-        "pair_late_start_ratio": ("late_start_ratio", "v2_late_start_ratio"),
-        "pair_ratio_ema": ("qc_ratio_ema_decay", "v2_ratio_ema_decay"),
-        "pair_dir_ema": ("qc_dir_ema_decay", "v2_dir_ema_decay"),
-        "pair_beta_mid": ("beta_mid", "v2_beta_mid"),
-        "pair_beta_late": ("beta_late", "v2_beta_late"),
-        "pair_ratio_tol_mid": ("ratio_tol_mid", "v2_ratio_tol_mid"),
-        "pair_ratio_tol_late": ("ratio_tol_late", "v2_ratio_tol_late"),
-        "pair_dir_min_mid": ("dir_min_mid", "v2_dir_min_mid"),
-        "pair_dir_min_late": ("dir_min_late", "v2_dir_min_late"),
-        "pair_scale_ema": ("scale_ema_decay", "v2_scale_ema_decay"),
-        "pair_scale_low": ("scale_clamp_low", "v2_scale_clamp_low"),
-        "pair_scale_high": ("scale_clamp_high", "v2_scale_clamp_high"),
-        "anchor_cond_cap_mid": ("b2_cond_rel_cap_mid", "v2_b2_cond_rel_cap_mid"),
-        "anchor_cond_cap_late": ("b2_cond_rel_cap_late", "v2_b2_cond_rel_cap_late"),
-        "anchor_alpha_early": ("b2_alpha_prior_early", "v2_b2_alpha_prior_early"),
-        "anchor_alpha_mid": ("b2_alpha_prior_mid", "v2_b2_alpha_prior_mid"),
-        "anchor_alpha_late": ("b2_alpha_prior_late", "v2_b2_alpha_prior_late"),
-        "anchor_alpha_ema": ("b2_alpha_ema_decay", "v2_b2_alpha_ema_decay"),
-        "anchor_blend_mid": ("b2_blend_mid", "v2_b2_blend_mid"),
-        "anchor_blend_late": ("b2_blend_late", "v2_b2_blend_late"),
-        "anchor_diff_cap_mid": ("b2_disagree_rel_cap_mid", "v2_b2_disagree_rel_cap_mid"),
-        "anchor_diff_cap_late": ("b2_disagree_rel_cap_late", "v2_b2_disagree_rel_cap_late"),
-    }
-    for label_key, (target_key, legacy_key) in bool_keys.items():
-        value = _coerce_optional_bool(raw.get(label_key, raw.get(legacy_key)), label=f"{label_prefix}.{label_key}")
-        if value is not None:
-            resolved[target_key] = bool(value)
-    for label_key, (target_key, legacy_key) in int_keys.items():
-        value = _coerce_optional_int(raw.get(label_key, raw.get(legacy_key)), label=f"{label_prefix}.{label_key}")
-        if value is not None:
-            resolved[target_key] = int(value)
-    aggressiveness = float(resolved.pop("aggressiveness", 0.0))
-    for label_key, (target_key, legacy_key) in float_keys.items():
-        value = _coerce_optional_float(raw.get(label_key, raw.get(legacy_key)), label=f"{label_prefix}.{label_key}")
-        if value is None:
-            continue
-        if target_key == "aggressiveness":
-            aggressiveness = float(value)
-        else:
-            resolved[target_key] = float(value)
-    if int(resolved["subsample_stride"]) < 1:
-        raise ValueError(f"{label_prefix}.pair_stride must be >= 1.")
-    if not 0.0 <= float(resolved["qc_ratio_ema_decay"]) <= 1.0:
-        raise ValueError(f"{label_prefix}.pair_ratio_ema must be in [0, 1].")
-    if not 0.0 <= float(resolved["qc_dir_ema_decay"]) <= 1.0:
-        raise ValueError(f"{label_prefix}.pair_dir_ema must be in [0, 1].")
-    if not 0.0 <= float(resolved["scale_ema_decay"]) <= 1.0:
-        raise ValueError(f"{label_prefix}.pair_scale_ema must be in [0, 1].")
-    if float(resolved["scale_clamp_low"]) <= 0.0:
-        raise ValueError(f"{label_prefix}.pair_scale_low must be positive.")
-    if float(resolved["scale_clamp_high"]) < float(resolved["scale_clamp_low"]):
-        raise ValueError(f"{label_prefix}.pair_scale_high must be >= pair_scale_low.")
-    if float(resolved["early_end_ratio"]) < 0.0 or float(resolved["early_end_ratio"]) > 1.0:
-        raise ValueError(f"{label_prefix}.pair_early_end_ratio must be in [0, 1].")
-    if float(resolved["late_start_ratio"]) < float(resolved["early_end_ratio"]) or float(resolved["late_start_ratio"]) > 1.0:
-        raise ValueError(f"{label_prefix}.pair_late_start_ratio must be in [pair_early_end_ratio, 1].")
-    resolved = _apply_v2_aggressiveness(resolved, aggressiveness)
-    resolved["aggressiveness"] = float(aggressiveness)
+def _resolved_base_thresh(
+    raw: dict[str, Any],
+    *,
+    label_prefix: str,
+    default_thresh: float,
+) -> float:
+    value = _coerce_optional_float(
+        raw.get("base_thresh", raw.get("cache_thresh", raw.get("thresh", raw.get("threshold")))),
+        label=f"{label_prefix}.base_thresh",
+    )
+    resolved = float(default_thresh if value is None else value)
+    if resolved < 0:
+        raise ValueError(f"{label_prefix}.base_thresh must be non-negative. Received {resolved!r}.")
     return resolved
+
+
+def _resolved_ret_steps(
+    raw: dict[str, Any],
+    *,
+    label_prefix: str,
+    default_ret_steps: int,
+) -> int:
+    value = _coerce_optional_int(
+        raw.get("warmup_pairs", raw.get("cache_ret_steps", raw.get("ret_steps"))),
+        label=f"{label_prefix}.ret_steps",
+    )
+    resolved = int(default_ret_steps if value is None else value)
+    if resolved < 0:
+        raise ValueError(f"{label_prefix}.ret_steps must be non-negative. Received {resolved!r}.")
+    return resolved
+
+
+def _resolve_phase_thresholds(
+    *,
+    base_thresh: float,
+    explicit_thresholds: dict[str, Any] | None,
+    explicit_scales: dict[str, Any] | None,
+    default_scales: dict[str, Any] | None,
+) -> tuple[dict[str, float], dict[str, float]]:
+    resolved_scales = _resolve_phase_mapping(
+        default_scales or {phase: 1.0 for phase in _PHASES},
+        explicit_scales,
+        float,
+    )
+    resolved_thresholds: dict[str, float] = {}
+    explicit = explicit_thresholds or {}
+    for phase in _PHASES:
+        explicit_value = explicit.get(phase)
+        if explicit_value is None:
+            resolved_thresholds[phase] = float(base_thresh) * float(resolved_scales[phase])
+        else:
+            resolved_thresholds[phase] = float(explicit_value)
+    return resolved_thresholds, resolved_scales
 
 
 def _resolve_aligncache_config(
@@ -450,81 +353,143 @@ def _resolve_aligncache_config(
     sample_steps: int,
     label_prefix: str,
     default_thresh: float,
-    default_ret_steps: int | None = None,
+    default_ret_steps: int = 10,
     default_phase_threshold_scales: dict[str, float] | None = None,
     default_phase_scale_profile: str | None = None,
+    default_age_cap: dict[str, int] | None = None,
+    default_scale_init: dict[str, float] | None = None,
+    default_scale_low: dict[str, float] | None = None,
+    default_scale_high: dict[str, float] | None = None,
+    default_v2_cfg_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw = _normalize_aligncache_method_config(method_config)
-    base_thresh = _resolved_base_thresh(raw, label_prefix=label_prefix, default=default_thresh)
-    ret_steps = _resolved_ret_steps(
-        raw,
-        label_prefix=label_prefix,
-        sample_steps=int(sample_steps),
-        default_ret_steps=default_ret_steps,
+    base_thresh = _resolved_base_thresh(raw, label_prefix=label_prefix, default_thresh=default_thresh)
+    ret_steps = _resolved_ret_steps(raw, label_prefix=label_prefix, default_ret_steps=default_ret_steps)
+
+    explicit_thresholds = {}
+    explicit_thresholds.update(
+        _phase_mapping_from_flat_keys(
+            raw,
+            mapping_keys={
+                "early": "phase_thresh_early",
+                "mid": "phase_thresh_mid",
+                "late": "phase_thresh_late",
+            },
+            label_prefix=label_prefix,
+            caster=float,
+        )
     )
-    phase_thresholds, phase_threshold_scales, phase_scale_profile = _resolve_phase_thresholds(
+    if isinstance(raw.get("phase_thresholds"), dict):
+        explicit_thresholds.update(dict(raw["phase_thresholds"]))
+
+    explicit_scales = {}
+    explicit_scales.update(
+        _phase_mapping_from_flat_keys(
+            raw,
+            mapping_keys={
+                "early": "phase_scale_early",
+                "mid": "phase_scale_mid",
+                "late": "phase_scale_late",
+            },
+            label_prefix=label_prefix,
+            caster=float,
+        )
+    )
+    if isinstance(raw.get("phase_threshold_scales"), dict):
+        explicit_scales.update(dict(raw["phase_threshold_scales"]))
+
+    phase_thresholds, phase_threshold_scales = _resolve_phase_thresholds(
         base_thresh=base_thresh,
-        raw=raw,
-        label_prefix=label_prefix,
-        default_phase_threshold_scales=default_phase_threshold_scales,
-        default_phase_scale_profile=default_phase_scale_profile,
+        explicit_thresholds=explicit_thresholds or None,
+        explicit_scales=explicit_scales or None,
+        default_scales=default_phase_threshold_scales,
     )
 
-    age_cap = raw.get("fb_age_cap", raw.get("fb2_age_cap"))
-    if not isinstance(age_cap, dict):
-        age_cap = _phase_mapping_from_flat_keys(raw, "fb_age_cap", int) or _phase_mapping_from_flat_keys(raw, "fb2_age_cap", int)
-    scale_init = raw.get("fb_scale_init", raw.get("fb2_scale_init"))
-    if not isinstance(scale_init, dict):
-        scale_init = _phase_mapping_from_flat_keys(raw, "fb_scale_init", float) or _phase_mapping_from_flat_keys(raw, "fb2_scale_init", float)
-    scale_low = raw.get("fb_scale_low", raw.get("fb2_scale_low"))
-    if not isinstance(scale_low, dict):
-        scale_low = _phase_mapping_from_flat_keys(raw, "fb_scale_low", float) or _phase_mapping_from_flat_keys(raw, "fb2_scale_low", float)
-    scale_high = raw.get("fb_scale_high", raw.get("fb2_scale_high"))
-    if not isinstance(scale_high, dict):
-        scale_high = _phase_mapping_from_flat_keys(raw, "fb_scale_high", float) or _phase_mapping_from_flat_keys(raw, "fb2_scale_high", float)
-
-    resolved_age_cap = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_AGE_CAP, age_cap, int)
-    resolved_scale_init = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_SCALE_INIT, scale_init, float)
-    resolved_scale_low = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_SCALE_LOW, scale_low, float)
-    resolved_scale_high = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_SCALE_HIGH, scale_high, float)
-
-    for phase in _PHASES:
-        if float(resolved_scale_low[phase]) <= 0.0:
-            raise ValueError(f"{label_prefix}.fb_scale_low[{phase}] must be positive.")
-        if float(resolved_scale_high[phase]) < float(resolved_scale_low[phase]):
-            raise ValueError(f"{label_prefix}.fb_scale_high[{phase}] must be >= fb_scale_low[{phase}].")
-        if not (float(resolved_scale_low[phase]) <= float(resolved_scale_init[phase]) <= float(resolved_scale_high[phase])):
-            raise ValueError(
-                f"{label_prefix}.fb_scale_init[{phase}] must lie within "
-                f"[fb_scale_low[{phase}], fb_scale_high[{phase}]]."
-            )
-
-    ratio_ema_decay = _coerce_optional_float(
-        raw.get("fb_ratio_ema_decay", raw.get("fb2_ratio_ema_decay")),
-        label=f"{label_prefix}.fb_ratio_ema_decay",
+    scale_init = _resolve_phase_mapping(
+        default_scale_init or _ALIGNCACHE_DEFAULT_SCALE_INIT,
+        _resolve_phase_override_mapping(
+            raw,
+            nested_key="scale_init",
+            flat_mapping_keys={
+                "early": "fb_scale_init_early",
+                "mid": "fb_scale_init_mid",
+                "late": "fb_scale_init_late",
+            },
+            label_prefix=label_prefix,
+            caster=float,
+        ),
+        float,
     )
-    ratio_clip_low = _coerce_optional_float(
-        raw.get("fb_ratio_clip_low", raw.get("fb2_ratio_clip_low")),
-        label=f"{label_prefix}.fb_ratio_clip_low",
+    scale_low = _resolve_phase_mapping(
+        default_scale_low or _ALIGNCACHE_DEFAULT_SCALE_LOW,
+        _resolve_phase_override_mapping(
+            raw,
+            nested_key="scale_low",
+            flat_mapping_keys={
+                "early": "fb_scale_low_early",
+                "mid": "fb_scale_low_mid",
+                "late": "fb_scale_low_late",
+            },
+            label_prefix=label_prefix,
+            caster=float,
+        ),
+        float,
     )
-    ratio_clip_high = _coerce_optional_float(
-        raw.get("fb_ratio_clip_high", raw.get("fb2_ratio_clip_high")),
-        label=f"{label_prefix}.fb_ratio_clip_high",
+    scale_high = _resolve_phase_mapping(
+        default_scale_high or _ALIGNCACHE_DEFAULT_SCALE_HIGH,
+        _resolve_phase_override_mapping(
+            raw,
+            nested_key="scale_high",
+            flat_mapping_keys={
+                "early": "fb_scale_high_early",
+                "mid": "fb_scale_high_mid",
+                "late": "fb_scale_high_late",
+            },
+            label_prefix=label_prefix,
+            caster=float,
+        ),
+        float,
     )
-    resolved_ratio_ema_decay = float(_ALIGNCACHE_DEFAULTS["ratio_ema_decay"] if ratio_ema_decay is None else ratio_ema_decay)
-    resolved_ratio_clip_low = float(_ALIGNCACHE_DEFAULTS["ratio_clip_low"] if ratio_clip_low is None else ratio_clip_low)
-    resolved_ratio_clip_high = float(_ALIGNCACHE_DEFAULTS["ratio_clip_high"] if ratio_clip_high is None else ratio_clip_high)
-    if not 0.0 <= resolved_ratio_ema_decay <= 1.0:
-        raise ValueError(f"{label_prefix}.fb_ratio_ema_decay must be in [0, 1].")
-    if resolved_ratio_clip_low <= 0.0:
-        raise ValueError(f"{label_prefix}.fb_ratio_clip_low must be positive.")
-    if resolved_ratio_clip_high < resolved_ratio_clip_low:
-        raise ValueError(f"{label_prefix}.fb_ratio_clip_high must be >= fb_ratio_clip_low.")
-
-    v2_cfg = _resolve_aligncache_v2_cfg(raw, label_prefix=label_prefix)
+    age_cap = _resolve_phase_mapping(
+        default_age_cap or _ALIGNCACHE_DEFAULT_AGE_CAP,
+        _resolve_phase_override_mapping(
+            raw,
+            nested_key="age_cap",
+            flat_mapping_keys={
+                "early": "fb_age_cap_early",
+                "mid": "fb_age_cap_mid",
+                "late": "fb_age_cap_late",
+            },
+            label_prefix=label_prefix,
+            caster=int,
+        ),
+        int,
+    )
+    feedback_ratio_ema_decay = float(
+        _coerce_optional_float(raw.get("fb_ratio_ema_decay", raw.get("ratio_ema_decay")), label=f"{label_prefix}.ratio_ema_decay")
+        or 0.90
+    )
+    feedback_ratio_clip_low = float(
+        _coerce_optional_float(raw.get("fb_ratio_clip_low", raw.get("ratio_clip_low")), label=f"{label_prefix}.ratio_clip_low")
+        or 0.85
+    )
+    feedback_ratio_clip_high = float(
+        _coerce_optional_float(raw.get("fb_ratio_clip_high", raw.get("ratio_clip_high")), label=f"{label_prefix}.ratio_clip_high")
+        or 1.25
+    )
+    phase_scale_profile = _coerce_optional_str(
+        raw.get("phase_scale_profile", raw.get("base_phase_scale_profile")),
+        label=f"{label_prefix}.phase_scale_profile",
+    )
+    v2_input = raw.get("v2_cfg") or raw.get("pair_cfg") or raw.get("predictor") or raw
+    if default_v2_cfg_overrides:
+        merged_v2_input = dict(default_v2_cfg_overrides)
+        if isinstance(v2_input, dict):
+            merged_v2_input.update(v2_input)
+        v2_input = merged_v2_input
+    v2_cfg = _coerce_aligncache_v2_cfg_input(v2_input)
     pair_cfg = _pair_cfg_from_v2_cfg(v2_cfg)
-    guide_scale = _coerce_optional_float(raw.get("guide_scale", raw.get("sample_guide_scale")), label=f"{label_prefix}.guide_scale")
-    return {
+    resolved = {
         "method": "aligncache",
         "scheduler": "aligncache-base-plus-fb",
         "cache_thresh": float(base_thresh),
@@ -533,83 +498,133 @@ def _resolve_aligncache_config(
         "ret_steps": int(ret_steps),
         "warmup_pairs": int(ret_steps),
         "sample_steps": int(sample_steps),
-        "guide_scale": None if guide_scale is None else float(guide_scale),
-        "phase_thresholds": dict(phase_thresholds),
-        "phase_threshold_scales": dict(phase_threshold_scales),
-        "phase_scale_profile": phase_scale_profile,
+        "guide_scale": None,
+        "phase_thresholds": {phase: float(value) for phase, value in phase_thresholds.items()},
+        "phase_threshold_scales": {phase: float(value) for phase, value in phase_threshold_scales.items()},
+        "phase_scale_profile": phase_scale_profile if phase_scale_profile is not None else default_phase_scale_profile,
         "base_scheduler": {
             "method": "aligncache_preserved_accumulated_error",
             "base_thresh": float(base_thresh),
             "ret_steps": int(ret_steps),
             "warmup_pairs": int(ret_steps),
-            "phase_thresholds": dict(phase_thresholds),
-            "phase_threshold_scales": dict(phase_threshold_scales),
+            "phase_thresholds": {phase: float(value) for phase, value in phase_thresholds.items()},
+            "phase_threshold_scales": {phase: float(value) for phase, value in phase_threshold_scales.items()},
         },
-        "age_cap": dict(resolved_age_cap),
-        "scale_init": dict(resolved_scale_init),
-        "scale_low": dict(resolved_scale_low),
-        "scale_high": dict(resolved_scale_high),
-        "threshold_controller": {
-            "scale_init": dict(resolved_scale_init),
-            "scale_low": dict(resolved_scale_low),
-            "scale_high": dict(resolved_scale_high),
-        },
-        "fb_age_cap": dict(resolved_age_cap),
-        "fb_scale_init": dict(resolved_scale_init),
-        "fb_scale_low": dict(resolved_scale_low),
-        "fb_scale_high": dict(resolved_scale_high),
-        "feedback": {
-            "ratio_ema_decay": float(resolved_ratio_ema_decay),
-            "ratio_clip_low": float(resolved_ratio_clip_low),
-            "ratio_clip_high": float(resolved_ratio_clip_high),
-            "update_reasons": ["budget_exact"],
-        },
-        "fb_ratio_ema_decay": float(resolved_ratio_ema_decay),
-        "fb_ratio_clip_low": float(resolved_ratio_clip_low),
-        "fb_ratio_clip_high": float(resolved_ratio_clip_high),
-        "ratio_ema_decay": float(resolved_ratio_ema_decay),
-        "ratio_clip_low": float(resolved_ratio_clip_low),
-        "ratio_clip_high": float(resolved_ratio_clip_high),
-        "score_eps": float(_ALIGNCACHE_DEFAULTS["score_eps"]),
+        "age_cap": {phase: int(value) for phase, value in age_cap.items()},
+        "scale_init": {phase: float(value) for phase, value in scale_init.items()},
+        "scale_low": {phase: float(value) for phase, value in scale_low.items()},
+        "scale_high": {phase: float(value) for phase, value in scale_high.items()},
+        "ratio_ema_decay": float(feedback_ratio_ema_decay),
+        "ratio_clip_low": float(feedback_ratio_clip_low),
+        "ratio_clip_high": float(feedback_ratio_clip_high),
+        "score_eps": 1e-6,
         "v2_cfg": dict(v2_cfg),
-        "pair_cfg": dict(pair_cfg),
-        "predictor": dict(pair_cfg),
+        "pair_cfg": {
+            "pair_enable": bool(pair_cfg["enable"]),
+            "enable": bool(pair_cfg["enable"]),
+            "pair_aggr": float(v2_cfg["aggressiveness"]),
+            "pair_second_order": bool(pair_cfg["second_order"]),
+            "pair_online_scale": bool(pair_cfg["online_scale"]),
+            "pair_stride": int(pair_cfg["stride"]),
+            "pair_ratio_ema": float(pair_cfg["ratio_ema"]),
+            "pair_dir_ema": float(pair_cfg["dir_ema"]),
+            "pair_beta_mid": float(pair_cfg["beta_mid"]),
+            "pair_beta_late": float(pair_cfg["beta_late"]),
+            "pair_ratio_tol_mid": float(pair_cfg["ratio_tol_mid"]),
+            "pair_ratio_tol_late": float(pair_cfg["ratio_tol_late"]),
+            "pair_dir_min_mid": float(pair_cfg["dir_min_mid"]),
+            "pair_dir_min_late": float(pair_cfg["dir_min_late"]),
+            "pair_scale_ema": float(pair_cfg["scale_ema"]),
+            "pair_scale_low": float(pair_cfg["scale_low"]),
+            "pair_scale_high": float(pair_cfg["scale_high"]),
+            "pair_early_end_ratio": float(pair_cfg["early_end_ratio"]),
+            "pair_late_start_ratio": float(pair_cfg["late_start_ratio"]),
+            "anchor_enable": bool(pair_cfg["anchor_enable"]),
+            "anchor_exact_early": bool(pair_cfg["anchor_exact_early"]),
+            "anchor_age_mid": int(pair_cfg["anchor_age_mid"]),
+            "anchor_age_late": int(pair_cfg["anchor_age_late"]),
+            "anchor_cond_cap_mid": float(pair_cfg["anchor_cond_cap_mid"]),
+            "anchor_cond_cap_late": float(pair_cfg["anchor_cond_cap_late"]),
+            "anchor_alpha_early": float(pair_cfg["anchor_alpha_early"]),
+            "anchor_alpha_mid": float(pair_cfg["anchor_alpha_mid"]),
+            "anchor_alpha_late": float(pair_cfg["anchor_alpha_late"]),
+            "anchor_alpha_ema": float(pair_cfg["anchor_alpha_ema"]),
+            "anchor_blend_mid": float(pair_cfg["anchor_blend_mid"]),
+            "anchor_blend_late": float(pair_cfg["anchor_blend_late"]),
+            "anchor_diff_cap_mid": float(pair_cfg["anchor_diff_cap_mid"]),
+            "anchor_diff_cap_late": float(pair_cfg["anchor_diff_cap_late"]),
+        },
+        "predictor": dict(v2_cfg),
     }
+    return resolved
 
 
-def resolve_wan_aligncache_config(*, task: str, method_config: dict[str, Any] | None, sample_steps: int) -> dict[str, Any]:
-    if str(task) not in _WAN_SUPPORTED_TASKS:
+def resolve_wan_aligncache_config(
+    *,
+    task: str,
+    method_config: dict[str, Any] | None,
+    sample_steps: int,
+) -> dict[str, Any]:
+    resolved_task = str(task)
+    if resolved_task not in _WAN_SUPPORTED_TASKS:
         supported = ", ".join(sorted(_WAN_SUPPORTED_TASKS))
         raise ValueError(
             "AlignCache for Wan currently supports the vendored T2V tasks only. "
-            f"Received task={task!r}. Supported tasks: {supported}"
+            f"Received task={resolved_task!r}. Supported tasks: {supported}"
         )
     return _resolve_aligncache_config(
         method_config=method_config,
         sample_steps=int(sample_steps),
         label_prefix="wan.aligncache",
-        default_thresh=0.0625,
-        default_ret_steps=8,
+        default_thresh=0.065,
+        default_ret_steps=12,
         default_phase_threshold_scales=_ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES,
         default_phase_scale_profile="balanced",
     )
 
 
-def resolve_hunyuan_aligncache_config(method_config: dict[str, Any] | None, *, sample_steps: int) -> dict[str, Any]:
-    return _resolve_aligncache_config(
+def resolve_hunyuan_aligncache_config(
+    method_config: dict[str, Any] | None,
+    *,
+    sample_steps: int,
+) -> dict[str, Any]:
+    resolved = _resolve_aligncache_config(
         method_config=method_config,
         sample_steps=int(sample_steps),
         label_prefix="hunyuan.aligncache",
-        default_thresh=0.025,
+        default_thresh=0.024,
+        default_ret_steps=10,
+        default_phase_threshold_scales=_HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES,
+        default_phase_scale_profile="hunyuan",
+        default_age_cap=_HUNYUAN_ALIGNCACHE_AGE_CAP,
+        default_scale_init=_HUNYUAN_ALIGNCACHE_SCALE_INIT,
+        default_scale_low=_HUNYUAN_ALIGNCACHE_SCALE_LOW,
+        default_scale_high=_HUNYUAN_ALIGNCACHE_SCALE_HIGH,
+        default_v2_cfg_overrides=_HUNYUAN_ALIGNCACHE_V2_DEFAULTS,
     )
+    raw = _normalize_aligncache_method_config(method_config)
+    force_cfg_pair = _coerce_optional_bool(
+        raw.get("force_cfg_pair", raw.get("cfg_pair")),
+        label="hunyuan.aligncache.force_cfg_pair",
+    )
+    resolved["force_cfg_pair"] = False if force_cfg_pair is None else bool(force_cfg_pair)
+    return resolved
 
 
-def resolve_opensora_aligncache_config(method_config: dict[str, Any] | None, *, sample_steps: int) -> dict[str, Any]:
+def resolve_opensora_aligncache_config(
+    method_config: dict[str, Any] | None,
+    *,
+    sample_steps: int,
+) -> dict[str, Any]:
     return _resolve_aligncache_config(
         method_config=method_config,
         sample_steps=int(sample_steps),
         label_prefix="opensora.aligncache",
-        default_thresh=0.03,
+        default_thresh=0.11,
+        default_ret_steps=8,
+        default_phase_threshold_scales=_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES,
+        default_age_cap=_OPENSORA_ALIGNCACHE_AGE_CAP,
+        default_scale_high=_OPENSORA_ALIGNCACHE_SCALE_HIGH,
     )
 
 
@@ -618,7 +633,22 @@ def _tensor_list(values: torch.Tensor | Sequence[torch.Tensor] | None) -> list[t
         return None
     if isinstance(values, torch.Tensor):
         return [values]
-    return [value for value in values]
+    return list(values)
+
+
+def _hunyuan_has_cfg_pair(raw_input: torch.Tensor | Sequence[torch.Tensor]) -> bool:
+    if not isinstance(raw_input, torch.Tensor):
+        return False
+    if raw_input.ndim < 1:
+        return False
+    batch_size = int(raw_input.shape[0])
+    if batch_size <= 1 or batch_size % 2 != 0:
+        return False
+    half_batch = batch_size // 2
+    try:
+        return bool(torch.equal(raw_input[:half_batch], raw_input[half_batch : half_batch * 2]))
+    except Exception:
+        return False
 
 
 def _clone_tensor_list(values: Sequence[torch.Tensor] | None) -> list[torch.Tensor] | None:
@@ -631,10 +661,8 @@ def _tensor_list_subsample(values: Sequence[torch.Tensor] | None, stride: int) -
     if values is None:
         return None
     stride = max(int(stride), 1)
-    chunks: list[torch.Tensor] = []
-    for value in values:
-        chunks.append(value.detach().reshape(-1)[::stride].to(torch.float32).clone())
-    return torch.cat(chunks, dim=0) if chunks else None
+    pieces = [value.detach().reshape(-1)[::stride].to(torch.float32).clone() for value in values]
+    return torch.cat(pieces, dim=0) if pieces else None
 
 
 def _tensor_list_cosine(first: torch.Tensor | None, second: torch.Tensor | None) -> float | None:
@@ -645,22 +673,16 @@ def _tensor_list_cosine(first: torch.Tensor | None, second: torch.Tensor | None)
     denom = torch.norm(first_vec, p=2) * torch.norm(second_vec, p=2)
     if float(denom.item()) <= 1e-12:
         return None
-    value = (first_vec.dot(second_vec) / denom).clamp(min=-1.0, max=1.0)
-    return float(value.item())
+    return float((first_vec.dot(second_vec) / denom).clamp(min=-1.0, max=1.0).item())
 
 
 def _tensor_list_mean_abs(values: Sequence[torch.Tensor] | None) -> float | None:
-    if not values:
+    if values is None:
         return None
-    total = 0.0
-    count = 0
-    for value in values:
-        current = value.detach().to(torch.float32)
-        total += float(current.abs().sum().item())
-        count += int(current.numel())
-    if count <= 0:
-        return None
-    return float(total / count)
+    flat = torch.cat([value.detach().to(torch.float32).flatten() for value in values], dim=0)
+    if flat.numel() == 0:
+        return 0.0
+    return float(flat.abs().mean().item())
 
 
 def _tensor_list_rel_mse(prediction: Sequence[torch.Tensor] | None, reference: Sequence[torch.Tensor] | None) -> float | None:
@@ -668,11 +690,11 @@ def _tensor_list_rel_mse(prediction: Sequence[torch.Tensor] | None, reference: S
         return None
     numer = None
     denom = None
-    for predicted, expected in zip(prediction, reference):
-        predicted_f = predicted.detach().to(torch.float32)
-        expected_f = expected.detach().to(torch.float32)
-        current_numer = torch.sum((predicted_f - expected_f) ** 2, dtype=torch.float32)
-        current_denom = torch.sum(expected_f * expected_f, dtype=torch.float32)
+    for pred_value, ref_value in zip(prediction, reference):
+        pred_f = pred_value.detach().float()
+        ref_f = ref_value.detach().float()
+        current_numer = torch.sum((pred_f - ref_f) ** 2, dtype=torch.float32)
+        current_denom = torch.sum(ref_f * ref_f, dtype=torch.float32)
         numer = current_numer if numer is None else numer + current_numer
         denom = current_denom if denom is None else denom + current_denom
     if numer is None or denom is None:
@@ -685,8 +707,8 @@ def _fit_affine_scale_list(target: Sequence[torch.Tensor], basis: Sequence[torch
     numer = None
     denom = None
     for target_value, basis_value in zip(target, basis):
-        target_f = target_value.detach().to(torch.float32)
-        basis_f = basis_value.detach().to(torch.float32)
+        target_f = target_value.detach().float()
+        basis_f = basis_value.detach().float()
         current_numer = torch.sum(target_f * basis_f, dtype=torch.float32)
         current_denom = torch.sum(basis_f * basis_f, dtype=torch.float32)
         numer = current_numer if numer is None else numer + current_numer
@@ -713,7 +735,7 @@ def _update_running_ema(previous: float | None, current: float | None, decay: fl
         return previous
     if previous is None:
         return current
-    return float(decay) * float(previous) + (1.0 - float(decay)) * float(current)
+    return float(decay) * previous + (1.0 - float(decay)) * current
 
 
 def _get_phase(step_idx: int, total_steps: int, cfg: dict[str, Any]) -> str:
@@ -735,7 +757,7 @@ def _correction_params(cfg: dict[str, Any], phase: str) -> tuple[float, float, f
 
 def _init_phase_ema(value: float | None) -> dict[str, float | None]:
     stored = None if value is None else float(value)
-    return {"early": stored, "mid": stored, "late": stored}
+    return {phase: stored for phase in _PHASES}
 
 
 def _ratio_gate(ratio_ema: float | None, ratio_tol: float) -> float:
@@ -755,15 +777,41 @@ def _branch_name(is_cond: bool) -> str:
     return "cond" if bool(is_cond) else "uncond"
 
 
-def _init_v2_b2_state(cfg: dict[str, Any]) -> dict[str, Any]:
-    state = {
+def _reset_shadow_pair_state(runtime: Any) -> None:
+    runtime.cond_last = None
+    runtime.uncond_last = None
+    runtime.cond_prev = None
+    runtime.uncond_prev = None
+    runtime.cond_last_sub = None
+    runtime.uncond_last_sub = None
+    runtime.cond_ratio_ema = None
+    runtime.uncond_ratio_ema = None
+    runtime.cond_dir_ema = None
+    runtime.uncond_dir_ema = None
+    runtime.guided_sub = None
+    runtime.guided_ratio_ema = None
+    runtime.guided_dir_ema = None
+    runtime.guided_ready = False
+    runtime.cond_scale_ema = _init_phase_ema(1.0)
+    runtime.uncond_scale_ema = _init_phase_ema(1.0)
+    runtime.single_cache = None
+    runtime.single_last = None
+    runtime.single_prev = None
+    runtime.single_last_sub = None
+    runtime.single_ratio_ema = None
+    runtime.single_dir_ema = None
+    runtime.single_scale_ema = _init_phase_ema(1.0)
+
+
+def _init_anchor_state(cfg: dict[str, Any]) -> dict[str, Any]:
+    return {
         "anchor_cond": None,
         "anchor_uncond": None,
-        "last_exact_step": -1,
-        "phase_alpha_ema": {
-            "early": float(cfg["b2_alpha_prior_early"]),
-            "mid": float(cfg["b2_alpha_prior_mid"]),
-            "late": float(cfg["b2_alpha_prior_late"]),
+        "last_exact_pair": -1,
+        "alpha_ema": {
+            "early": float(cfg["anchor_alpha_early"]),
+            "mid": float(cfg["anchor_alpha_mid"]),
+            "late": float(cfg["anchor_alpha_late"]),
         },
         "counts": {
             "anchor_updates": 0,
@@ -776,126 +824,131 @@ def _init_v2_b2_state(cfg: dict[str, Any]) -> dict[str, Any]:
             "reject_weak_gate": 0,
         },
     }
-    state["last_exact_pair"] = state["last_exact_step"]
-    state["alpha_ema"] = state["phase_alpha_ema"]
-    return state
 
 
-def _init_pair_predictor_state(v2_cfg: dict[str, Any]) -> dict[str, Any]:
-    resolved_v2_cfg = _coerce_aligncache_v2_cfg_input(v2_cfg)
-    state = {
-        "cache": {"cond": None, "uncond": None},
-        "shadow_cache": {"cond": None, "uncond": None},
-        "shadow_prev_cache": {"cond": None, "uncond": None},
-        "shadow_cache_sub": {"cond": None, "uncond": None},
-        "shadow_pair_ratio_ema": {"cond": None, "uncond": None},
-        "shadow_pair_dir_ema": {"cond": None, "uncond": None},
-        "shadow_guided_pair_sub": None,
-        "shadow_guided_pair_ratio_ema": None,
-        "shadow_guided_pair_dir_ema": None,
-        "shadow_pair_valid": False,
-        "shadow_pair_scale_ema": {"cond": _init_phase_ema(1.0), "uncond": _init_phase_ema(1.0)},
-        "pending_cond_output": None,
-        "pending_cond_exact": False,
-        "b2_state": _init_v2_b2_state(resolved_v2_cfg),
-    }
-    state["pending_cond"] = state["pending_cond_output"]
-    state["anchor_state"] = state["b2_state"]
-    return state
+def _record_anchor_event(runtime: Any, key: str, *, enabled: bool = True) -> None:
+    if not enabled:
+        return
+    state = getattr(runtime, "anchor_state", None)
+    if state is None:
+        return
+    counts = state["counts"]
+    if key in counts:
+        counts[key] += 1
 
 
-def _store_pair_branch_history(pair_state: dict[str, Any], residual: Sequence[torch.Tensor], is_cond: bool, v2_cfg: dict[str, Any]) -> None:
-    branch = _branch_name(is_cond)
+def _clear_v2_pending_cond_state(runtime: Any) -> None:
+    runtime.pending_cond = None
+    runtime.pending_cond_exact = False
+
+
+def _set_v2_pending_cond_state(runtime: Any, output: Sequence[torch.Tensor], exact_pair: bool) -> None:
+    runtime.pending_cond = _clone_tensor_list(output)
+    runtime.pending_cond_exact = bool(exact_pair)
+
+
+def _store_pair_branch_history(runtime: Any, residual: Sequence[torch.Tensor], is_cond: bool) -> None:
     residual_detached = _clone_tensor_list(residual)
-    residual_sub = _tensor_list_subsample(residual_detached, int(v2_cfg["subsample_stride"]))
-    last = pair_state["shadow_cache"][branch]
-    last_sub = pair_state["shadow_cache_sub"][branch]
-    ratio_ema = pair_state["shadow_pair_ratio_ema"][branch]
-    dir_ema = pair_state["shadow_pair_dir_ema"][branch]
+    residual_sub = _tensor_list_subsample(residual_detached, runtime.pair_cfg["stride"])
+    if is_cond:
+        last = runtime.cond_last
+        last_sub = runtime.cond_last_sub
+        ratio_ema = runtime.cond_ratio_ema
+        dir_ema = runtime.cond_dir_ema
+    else:
+        last = runtime.uncond_last
+        last_sub = runtime.uncond_last_sub
+        ratio_ema = runtime.uncond_ratio_ema
+        dir_ema = runtime.uncond_dir_ema
+
     if last_sub is not None and residual_sub is not None:
         prev_norm = torch.norm(last_sub, p=2).clamp_(min=1e-12)
         curr_norm = torch.norm(residual_sub, p=2)
         ratio = float((curr_norm / prev_norm).item())
         direction = _tensor_list_cosine(residual_sub, last_sub)
-        ratio_ema = _update_running_ema(ratio_ema, ratio, float(v2_cfg["qc_ratio_ema_decay"]))
-        dir_ema = _update_running_ema(dir_ema, direction, float(v2_cfg["qc_dir_ema_decay"]))
-    pair_state["shadow_prev_cache"][branch] = last
-    pair_state["shadow_cache"][branch] = residual_detached
-    pair_state["shadow_cache_sub"][branch] = residual_sub
-    pair_state["shadow_pair_ratio_ema"][branch] = ratio_ema
-    pair_state["shadow_pair_dir_ema"][branch] = dir_ema
+        ratio_ema = _update_running_ema(ratio_ema, ratio, runtime.pair_cfg["ratio_ema"])
+        dir_ema = _update_running_ema(dir_ema, direction, runtime.pair_cfg["dir_ema"])
+
+    if is_cond:
+        runtime.cond_prev = last
+        runtime.cond_last = residual_detached
+        runtime.cond_last_sub = residual_sub
+        runtime.cond_ratio_ema = ratio_ema
+        runtime.cond_dir_ema = dir_ema
+    else:
+        runtime.uncond_prev = last
+        runtime.uncond_last = residual_detached
+        runtime.uncond_last_sub = residual_sub
+        runtime.uncond_ratio_ema = ratio_ema
+        runtime.uncond_dir_ema = dir_ema
 
 
-def _compose_guided_pair_sub(cond_sub: torch.Tensor | None, uncond_sub: torch.Tensor | None, guide_scale: float) -> torch.Tensor | None:
+def _compose_guided_pair_sub(runtime: Any, cond_sub: torch.Tensor | None, uncond_sub: torch.Tensor | None) -> torch.Tensor | None:
     if cond_sub is None or uncond_sub is None:
         return None
-    return uncond_sub + (cond_sub - uncond_sub) * float(guide_scale)
+    guide_scale = float(getattr(runtime, "sample_guide_scale", 5.0))
+    return uncond_sub + (cond_sub - uncond_sub) * guide_scale
 
 
-def _update_guided_pair_history(pair_state: dict[str, Any], v2_cfg: dict[str, Any], guide_scale: float) -> None:
-    guided_sub = _compose_guided_pair_sub(
-        pair_state["shadow_cache_sub"]["cond"],
-        pair_state["shadow_cache_sub"]["uncond"],
-        guide_scale,
-    )
+def _update_guided_pair_history(runtime: Any) -> None:
+    guided_sub = _compose_guided_pair_sub(runtime, runtime.cond_last_sub, runtime.uncond_last_sub)
     if guided_sub is None:
-        pair_state["shadow_pair_valid"] = False
+        runtime.guided_ready = False
         return
-    prev_guided = pair_state["shadow_guided_pair_sub"]
+    prev_guided = runtime.guided_sub
     if prev_guided is not None:
         prev_norm = torch.norm(prev_guided, p=2).clamp_(min=1e-12)
         curr_norm = torch.norm(guided_sub, p=2)
         ratio = float((curr_norm / prev_norm).item())
         direction = _tensor_list_cosine(guided_sub, prev_guided)
-        pair_state["shadow_guided_pair_ratio_ema"] = _update_running_ema(
-            pair_state["shadow_guided_pair_ratio_ema"],
-            ratio,
-            float(v2_cfg["qc_ratio_ema_decay"]),
-        )
-        pair_state["shadow_guided_pair_dir_ema"] = _update_running_ema(
-            pair_state["shadow_guided_pair_dir_ema"],
-            direction,
-            float(v2_cfg["qc_dir_ema_decay"]),
-        )
-    pair_state["shadow_guided_pair_sub"] = guided_sub.clone()
-    pair_state["shadow_pair_valid"] = True
+        runtime.guided_ratio_ema = _update_running_ema(runtime.guided_ratio_ema, ratio, runtime.pair_cfg["ratio_ema"])
+        runtime.guided_dir_ema = _update_running_ema(runtime.guided_dir_ema, direction, runtime.pair_cfg["dir_ema"])
+    runtime.guided_sub = guided_sub.clone()
+    runtime.guided_ready = True
 
 
-def _pair_scale_value(pair_state: dict[str, Any], phase: str, is_cond: bool, v2_cfg: dict[str, Any]) -> float:
-    if not bool(v2_cfg.get("use_online_scale", True)):
+def _pair_scale_state(runtime: Any, is_cond: bool) -> dict[str, float | None]:
+    return runtime.cond_scale_ema if bool(is_cond) else runtime.uncond_scale_ema
+
+
+def _pair_scale_value(runtime: Any, phase: str, is_cond: bool) -> float:
+    if not runtime.pair_cfg.get("online_scale", True):
         return 1.0
-    branch = _branch_name(is_cond)
-    scale_state = pair_state["shadow_pair_scale_ema"][branch]
+    scale_state = _pair_scale_state(runtime, is_cond)
     scale = 1.0 if scale_state is None else float(scale_state[phase])
-    return _clamp_float(scale, float(v2_cfg["scale_clamp_low"]), float(v2_cfg["scale_clamp_high"]))
+    return _clamp_float(scale, runtime.pair_cfg["scale_low"], runtime.pair_cfg["scale_high"])
 
 
-def _pair_blend_coeff(pair_state: dict[str, Any], phase: str, is_cond: bool, v2_cfg: dict[str, Any]) -> tuple[float, float]:
-    beta, ratio_tol, dir_min = _correction_params(v2_cfg, phase)
+def _pair_blend_coeff(runtime: Any, phase: str, is_cond: bool) -> tuple[float, float]:
+    beta, ratio_tol, dir_min = _correction_params(runtime.pair_cfg, phase)
     if beta <= 0.0:
         return 0.0, 0.0
-    branch = _branch_name(is_cond)
+    if is_cond:
+        branch_ratio_ema = runtime.cond_ratio_ema
+        branch_dir_ema = runtime.cond_dir_ema
+    else:
+        branch_ratio_ema = runtime.uncond_ratio_ema
+        branch_dir_ema = runtime.uncond_dir_ema
     gate = min(
-        _ratio_gate(pair_state["shadow_guided_pair_ratio_ema"], ratio_tol),
-        _dir_gate(pair_state["shadow_guided_pair_dir_ema"], dir_min),
-        _ratio_gate(pair_state["shadow_pair_ratio_ema"][branch], ratio_tol),
-        _dir_gate(pair_state["shadow_pair_dir_ema"][branch], dir_min),
+        _ratio_gate(runtime.guided_ratio_ema, ratio_tol),
+        _dir_gate(runtime.guided_dir_ema, dir_min),
+        _ratio_gate(branch_ratio_ema, ratio_tol),
+        _dir_gate(branch_dir_ema, dir_min),
     )
     beta_eff = beta * gate
-    return float(beta_eff), float(gate)
+    return beta_eff, gate
 
 
-def _predict_pair_residual(pair_state: dict[str, Any], phase: str, is_cond: bool, v2_cfg: dict[str, Any]) -> list[torch.Tensor] | None:
-    branch = _branch_name(is_cond)
-    last = pair_state["shadow_cache"][branch]
-    prev = pair_state["shadow_prev_cache"][branch]
+def _predict_pair_residual(runtime: Any, phase: str, is_cond: bool) -> list[torch.Tensor] | None:
+    last = runtime.cond_last if bool(is_cond) else runtime.uncond_last
+    prev = runtime.cond_prev if bool(is_cond) else runtime.uncond_prev
     if last is None:
         return None
-    base_scale = _pair_scale_value(pair_state, phase, is_cond, v2_cfg)
-    base_pred = [tensor.detach().to(torch.float32) * float(base_scale) for tensor in last]
-    if not bool(v2_cfg.get("use_second_order", True)) or prev is None:
+    base_scale = _pair_scale_value(runtime, phase, is_cond)
+    base_pred = [tensor.detach().to(torch.float32) * base_scale for tensor in last]
+    if not runtime.pair_cfg.get("second_order", True) or prev is None:
         return base_pred
-    beta_eff, blend_gate = _pair_blend_coeff(pair_state, phase, is_cond, v2_cfg)
+    beta_eff, blend_gate = _pair_blend_coeff(runtime, phase, is_cond)
     if beta_eff <= 1e-4 or blend_gate <= 1e-4:
         return base_pred
     return [
@@ -904,178 +957,239 @@ def _predict_pair_residual(pair_state: dict[str, Any], phase: str, is_cond: bool
     ]
 
 
-def _update_pair_scale_from_exact(pair_state: dict[str, Any], residual: Sequence[torch.Tensor], phase: str, is_cond: bool, v2_cfg: dict[str, Any]) -> None:
-    if not bool(v2_cfg.get("use_online_scale", True)):
+def _update_pair_scale_from_exact(runtime: Any, residual: Sequence[torch.Tensor], phase: str, is_cond: bool) -> None:
+    if not runtime.pair_cfg.get("online_scale", True):
         return
-    branch = _branch_name(is_cond)
-    last = pair_state["shadow_cache"][branch]
+    last = runtime.cond_last if bool(is_cond) else runtime.uncond_last
     if last is None:
         return
-    scale_state = pair_state["shadow_pair_scale_ema"][branch]
-    fitted = _fit_affine_scale_list(residual, last, default_alpha=float(scale_state[phase]))
-    fitted = _clamp_float(fitted, float(v2_cfg["scale_clamp_low"]), float(v2_cfg["scale_clamp_high"]))
-    scale_state[phase] = _update_running_ema(scale_state[phase], fitted, float(v2_cfg["scale_ema_decay"]))
+    scale_state = _pair_scale_state(runtime, is_cond)
+    fitted = _fit_affine_scale_list(residual, last, default_alpha=scale_state[phase])
+    fitted = _clamp_float(fitted, runtime.pair_cfg["scale_low"], runtime.pair_cfg["scale_high"])
+    scale_state[phase] = _update_running_ema(scale_state[phase], fitted, runtime.pair_cfg["scale_ema"])
 
 
-def _predict_pair_output(
-    raw_input: Sequence[torch.Tensor],
-    pair_state: dict[str, Any],
-    phase: str,
-    is_cond: bool,
-    v2_cfg: dict[str, Any],
-) -> list[torch.Tensor] | None:
-    branch = _branch_name(is_cond)
-    cached = pair_state["cache"][branch]
-    if cached is None:
+def _learn_pair_from_exact(runtime: Any, residual: Sequence[torch.Tensor], phase: str, is_cond: bool) -> None:
+    _update_pair_scale_from_exact(runtime, residual, phase, is_cond)
+
+
+def _predict_pair_output(runtime: Any, raw_input: Sequence[torch.Tensor], phase: str, is_cond: bool) -> list[torch.Tensor] | None:
+    cache = runtime.cond_cache if bool(is_cond) else runtime.uncond_cache
+    if cache is None:
         return None
-    base_output = [value + delta.to(dtype=value.dtype) for value, delta in zip(raw_input, cached)]
-    if not bool(v2_cfg.get("enable", True)) or not bool(pair_state["shadow_pair_valid"]):
+    base_output = [value + delta.to(dtype=value.dtype) for value, delta in zip(raw_input, cache)]
+    if not runtime.pair_cfg.get("enable", True) or not runtime.guided_ready:
         return base_output
-    pred_residual = _predict_pair_residual(pair_state, phase, is_cond, v2_cfg)
+    pred_residual = _predict_pair_residual(runtime, phase, is_cond)
     if pred_residual is None:
         return base_output
     return [value + delta.to(dtype=value.dtype) for value, delta in zip(raw_input, pred_residual)]
 
 
 def _write_pair_branch_result(
-    pair_state: dict[str, Any],
+    runtime: Any,
     raw_input: Sequence[torch.Tensor],
     output: Sequence[torch.Tensor],
     is_cond: bool,
     phase: str,
     learn_from_exact: bool,
-    v2_cfg: dict[str, Any],
-    guide_scale: float,
 ) -> None:
     residual = [(u - v).detach() for u, v in zip(output, raw_input)]
     if learn_from_exact:
-        _update_pair_scale_from_exact(pair_state, residual, phase, is_cond, v2_cfg)
-    _store_pair_branch_history(pair_state, residual, is_cond, v2_cfg)
+        _learn_pair_from_exact(runtime, residual, phase, is_cond)
+    _store_pair_branch_history(runtime, residual, is_cond)
     if not bool(is_cond):
-        _update_guided_pair_history(pair_state, v2_cfg, guide_scale)
+        _update_guided_pair_history(runtime)
 
 
-def _record_v2_b2_event(pair_state: dict[str, Any], key: str, *, enabled: bool = True) -> None:
-    if not enabled:
+def _single_scale_value(runtime: Any, phase: str) -> float:
+    if not runtime.pair_cfg.get("online_scale", True):
+        return 1.0
+    scale_state = getattr(runtime, "single_scale_ema", None)
+    if not isinstance(scale_state, dict):
+        runtime.single_scale_ema = _init_phase_ema(1.0)
+        scale_state = runtime.single_scale_ema
+    scale = 1.0 if scale_state.get(phase) is None else float(scale_state[phase])
+    return _clamp_float(scale, runtime.pair_cfg["scale_low"], runtime.pair_cfg["scale_high"])
+
+
+def _single_blend_coeff(runtime: Any, phase: str) -> tuple[float, float]:
+    beta, ratio_tol, dir_min = _correction_params(runtime.pair_cfg, phase)
+    if beta <= 0.0:
+        return 0.0, 0.0
+    gate = min(
+        _ratio_gate(getattr(runtime, "single_ratio_ema", None), ratio_tol),
+        _dir_gate(getattr(runtime, "single_dir_ema", None), dir_min),
+    )
+    beta_eff = beta * gate
+    return beta_eff, gate
+
+
+def _predict_single_residual(runtime: Any, phase: str) -> list[torch.Tensor] | None:
+    last = getattr(runtime, "single_last", None)
+    prev = getattr(runtime, "single_prev", None)
+    if last is None:
+        return None
+    base_scale = _single_scale_value(runtime, phase)
+    base_pred = [tensor.detach().to(torch.float32) * base_scale for tensor in last]
+    if not runtime.pair_cfg.get("second_order", True) or prev is None:
+        return base_pred
+    beta_eff, blend_gate = _single_blend_coeff(runtime, phase)
+    if beta_eff <= 1e-4 or blend_gate <= 1e-4:
+        return base_pred
+    return [
+        base + (current.detach().to(torch.float32) - previous.detach().to(torch.float32)) * beta_eff
+        for base, current, previous in zip(base_pred, last, prev)
+    ]
+
+
+def _predict_single_output(
+    runtime: Any,
+    raw_input: Sequence[torch.Tensor],
+    phase: str,
+) -> list[torch.Tensor] | None:
+    cache = getattr(runtime, "single_cache", None)
+    if cache is None:
+        return None
+    base_output = [value + delta.to(dtype=value.dtype) for value, delta in zip(raw_input, cache)]
+    if not runtime.pair_cfg.get("enable", True):
+        return base_output
+    pred_residual = _predict_single_residual(runtime, phase)
+    if pred_residual is None:
+        return base_output
+    return [value + delta.to(dtype=value.dtype) for value, delta in zip(raw_input, pred_residual)]
+
+
+def _update_single_scale_from_exact(runtime: Any, residual: Sequence[torch.Tensor], phase: str) -> None:
+    if not runtime.pair_cfg.get("online_scale", True):
         return
-    counts = pair_state["b2_state"]["counts"]
-    if key in counts:
-        counts[key] += 1
+    last = getattr(runtime, "single_last", None)
+    if last is None:
+        return
+    scale_state = getattr(runtime, "single_scale_ema", None)
+    if not isinstance(scale_state, dict):
+        runtime.single_scale_ema = _init_phase_ema(1.0)
+        scale_state = runtime.single_scale_ema
+    fitted = _fit_affine_scale_list(residual, last, default_alpha=scale_state[phase])
+    fitted = _clamp_float(fitted, runtime.pair_cfg["scale_low"], runtime.pair_cfg["scale_high"])
+    scale_state[phase] = _update_running_ema(scale_state[phase], fitted, runtime.pair_cfg["scale_ema"])
 
 
-def _clear_v2_pending_cond_state(pair_state: dict[str, Any]) -> None:
-    pair_state["pending_cond_output"] = None
-    pair_state["pending_cond_exact"] = False
-    pair_state["pending_cond"] = None
+def _store_single_branch_history(runtime: Any, residual: Sequence[torch.Tensor]) -> None:
+    residual_detached = _clone_tensor_list(residual)
+    residual_sub = _tensor_list_subsample(residual_detached, runtime.pair_cfg["stride"])
+    last = getattr(runtime, "single_last", None)
+    last_sub = getattr(runtime, "single_last_sub", None)
+    ratio_ema = getattr(runtime, "single_ratio_ema", None)
+    dir_ema = getattr(runtime, "single_dir_ema", None)
+
+    if last_sub is not None and residual_sub is not None:
+        prev_norm = torch.norm(last_sub, p=2).clamp_(min=1e-12)
+        curr_norm = torch.norm(residual_sub, p=2)
+        ratio = float((curr_norm / prev_norm).item())
+        direction = _tensor_list_cosine(residual_sub, last_sub)
+        ratio_ema = _update_running_ema(ratio_ema, ratio, runtime.pair_cfg["ratio_ema"])
+        dir_ema = _update_running_ema(dir_ema, direction, runtime.pair_cfg["dir_ema"])
+
+    runtime.single_prev = last
+    runtime.single_last = residual_detached
+    runtime.single_last_sub = residual_sub
+    runtime.single_ratio_ema = ratio_ema
+    runtime.single_dir_ema = dir_ema
 
 
-def _set_v2_pending_cond_state(pair_state: dict[str, Any], output: Sequence[torch.Tensor], exact_pair: bool) -> None:
-    pair_state["pending_cond_output"] = _clone_tensor_list(output)
-    pair_state["pending_cond_exact"] = bool(exact_pair)
-    pair_state["pending_cond"] = pair_state["pending_cond_output"]
+def _write_single_branch_result(
+    runtime: Any,
+    raw_input: Sequence[torch.Tensor],
+    output: Sequence[torch.Tensor],
+    phase: str,
+    learn_from_exact: bool,
+) -> list[torch.Tensor]:
+    residual = [(u - v).detach() for u, v in zip(output, raw_input)]
+    runtime.single_cache = _clone_tensor_list(residual)
+    if learn_from_exact:
+        _update_single_scale_from_exact(runtime, residual, phase)
+    _store_single_branch_history(runtime, residual)
+    return residual
 
 
-def _predict_v2_b2_uncond(
-    pair_state: dict[str, Any],
+def _predict_anchor_uncond(
+    runtime: Any,
     phase: str,
     step_idx: int,
     cond_output: Sequence[torch.Tensor] | None,
     base_output: Sequence[torch.Tensor] | None,
-    v2_cfg: dict[str, Any],
     *,
     record_event: bool = True,
 ) -> list[torch.Tensor] | None:
-    if not bool(v2_cfg.get("enable", True)) or not bool(v2_cfg.get("b2_enable", True)):
+    cfg = runtime.pair_cfg
+    if not cfg.get("enable", True) or not cfg.get("anchor_enable", True):
         return None
-    state = pair_state["b2_state"]
-    if cond_output is None or base_output is None:
-        _record_v2_b2_event(pair_state, "reject_no_anchor", enabled=record_event)
+    state = getattr(runtime, "anchor_state", None)
+    if state is None or cond_output is None or base_output is None:
+        _record_anchor_event(runtime, "reject_no_anchor", enabled=record_event)
         return None
     if state["anchor_cond"] is None or state["anchor_uncond"] is None:
-        _record_v2_b2_event(pair_state, "reject_no_anchor", enabled=record_event)
+        _record_anchor_event(runtime, "reject_no_anchor", enabled=record_event)
         return None
-    if bool(v2_cfg.get("b2_exact_early", True)) and phase == "early":
-        _record_v2_b2_event(pair_state, "reject_early_exact", enabled=record_event)
+    if cfg.get("anchor_exact_early", True) and phase == "early":
+        _record_anchor_event(runtime, "reject_early_exact", enabled=record_event)
         return None
-    max_pred_age = {
-        "early": 0,
-        "mid": int(v2_cfg["b2_max_pred_age_mid"]),
-        "late": int(v2_cfg["b2_max_pred_age_late"]),
-    }
-    last_exact_step = state.get("last_exact_pair", state.get("last_exact_step", -1))
-    pred_age = int(step_idx) - int(last_exact_step)
-    if pred_age > max_pred_age[phase]:
-        _record_v2_b2_event(pair_state, "reject_max_age", enabled=record_event)
+    max_pred_age = {"early": 0, "mid": int(cfg["anchor_age_mid"]), "late": int(cfg["anchor_age_late"])}
+    anchor_age = int(step_idx) - int(state["last_exact_pair"])
+    if anchor_age > max_pred_age[phase]:
+        _record_anchor_event(runtime, "reject_max_age", enabled=record_event)
         return None
-    cond_rel_cap = {
-        "early": 0.0,
-        "mid": float(v2_cfg["b2_cond_rel_cap_mid"]),
-        "late": float(v2_cfg["b2_cond_rel_cap_late"]),
-    }
+    cond_rel_cap = {"early": 0.0, "mid": float(cfg["anchor_cond_cap_mid"]), "late": float(cfg["anchor_cond_cap_late"])}
     cond_rel = _tensor_list_rel_mse(cond_output, state["anchor_cond"])
     cond_rel = 0.0 if cond_rel is None else cond_rel
     if cond_rel > cond_rel_cap[phase]:
-        _record_v2_b2_event(pair_state, "reject_cond_gate", enabled=record_event)
+        _record_anchor_event(runtime, "reject_cond_gate", enabled=record_event)
         return None
-    alpha = float(state["phase_alpha_ema"][phase])
-    b2_output = [
+    alpha = float(state["alpha_ema"][phase])
+    anchor_output = [
         anchor_uncond.detach().to(torch.float32)
         + (cond_value.detach().to(torch.float32) - anchor_cond.detach().to(torch.float32)) * alpha
         for cond_value, anchor_cond, anchor_uncond in zip(cond_output, state["anchor_cond"], state["anchor_uncond"])
     ]
-    disagree_cap = {
-        "early": 0.0,
-        "mid": float(v2_cfg["b2_disagree_rel_cap_mid"]),
-        "late": float(v2_cfg["b2_disagree_rel_cap_late"]),
-    }
-    disagree_rel = _tensor_list_rel_mse(b2_output, base_output)
+    disagree_cap = {"early": 0.0, "mid": float(cfg["anchor_diff_cap_mid"]), "late": float(cfg["anchor_diff_cap_late"])}
+    disagree_rel = _tensor_list_rel_mse(anchor_output, base_output)
     disagree_rel = 0.0 if disagree_rel is None else disagree_rel
     if disagree_rel > disagree_cap[phase]:
-        _record_v2_b2_event(pair_state, "reject_disagree", enabled=record_event)
+        _record_anchor_event(runtime, "reject_disagree", enabled=record_event)
         return None
-    blend_base = {
-        "early": 0.0,
-        "mid": float(v2_cfg["b2_blend_mid"]),
-        "late": float(v2_cfg["b2_blend_late"]),
-    }
+    blend_base = {"early": 0.0, "mid": float(cfg["anchor_blend_mid"]), "late": float(cfg["anchor_blend_late"])}
     blend_weight = blend_base[phase]
     if blend_weight <= 1e-6:
-        _record_v2_b2_event(pair_state, "reject_weak_gate", enabled=record_event)
+        _record_anchor_event(runtime, "reject_weak_gate", enabled=record_event)
         return None
-    cond_gate = 1.0
-    if cond_rel_cap[phase] > 0.0:
-        cond_gate = max(0.0, 1.0 - cond_rel / max(cond_rel_cap[phase], 1e-6))
-    disagree_gate = 1.0
-    if disagree_cap[phase] > 0.0:
-        disagree_gate = max(0.0, 1.0 - disagree_rel / max(disagree_cap[phase], 1e-6))
+    cond_gate = 1.0 if cond_rel_cap[phase] <= 0.0 else max(0.0, 1.0 - cond_rel / max(cond_rel_cap[phase], 1e-6))
+    disagree_gate = 1.0 if disagree_cap[phase] <= 0.0 else max(0.0, 1.0 - disagree_rel / max(disagree_cap[phase], 1e-6))
     if max_pred_age[phase] <= 1:
         age_gate = 1.0
     else:
-        age_gate = max(
-            0.0,
-            1.0 - max(float(pred_age) - 1.0, 0.0) / max(float(max_pred_age[phase] - 1), 1.0),
-        )
+        age_gate = max(0.0, 1.0 - max(float(anchor_age) - 1.0, 0.0) / max(float(max_pred_age[phase] - 1), 1.0))
     blend_weight *= min(cond_gate, disagree_gate, age_gate)
     if blend_weight <= 1e-4:
-        _record_v2_b2_event(pair_state, "reject_weak_gate", enabled=record_event)
+        _record_anchor_event(runtime, "reject_weak_gate", enabled=record_event)
         return None
-    _record_v2_b2_event(pair_state, "applied_steps", enabled=record_event)
-    return _blend_tensor_lists(base_output, b2_output, blend_weight)
+    _record_anchor_event(runtime, "applied_steps", enabled=record_event)
+    return _blend_tensor_lists(base_output, anchor_output, blend_weight)
 
 
-def _update_v2_b2_exact_state(
-    pair_state: dict[str, Any],
+def _update_anchor_state(
+    runtime: Any,
     phase: str,
     step_idx: int,
     cond_output: Sequence[torch.Tensor] | None,
     uncond_output: Sequence[torch.Tensor] | None,
     learn: bool,
-    v2_cfg: dict[str, Any],
 ) -> None:
-    if not bool(v2_cfg.get("enable", True)) or not bool(v2_cfg.get("b2_enable", True)):
+    cfg = runtime.pair_cfg
+    if not cfg.get("enable", True) or not cfg.get("anchor_enable", True):
         return
-    state = pair_state["b2_state"]
-    if cond_output is None or uncond_output is None:
+    state = getattr(runtime, "anchor_state", None)
+    if state is None or cond_output is None or uncond_output is None:
         return
     if learn and state["anchor_cond"] is not None and state["anchor_uncond"] is not None:
         cond_delta = [
@@ -1086,64 +1200,30 @@ def _update_v2_b2_exact_state(
             uncond_value.detach().to(torch.float32) - anchor_value.detach().to(torch.float32)
             for uncond_value, anchor_value in zip(uncond_output, state["anchor_uncond"])
         ]
-        alpha = _fit_affine_scale_list(uncond_delta, cond_delta, default_alpha=float(state["phase_alpha_ema"][phase]))
-        decay = float(v2_cfg["b2_alpha_ema_decay"])
-        state["phase_alpha_ema"][phase] = decay * float(state["phase_alpha_ema"][phase]) + (1.0 - decay) * alpha
+        alpha = _fit_affine_scale_list(uncond_delta, cond_delta, default_alpha=state["alpha_ema"][phase])
+        decay = float(cfg["anchor_alpha_ema"])
+        state["alpha_ema"][phase] = decay * state["alpha_ema"][phase] + (1.0 - decay) * alpha
     state["anchor_cond"] = _clone_tensor_list(cond_output)
     state["anchor_uncond"] = _clone_tensor_list(uncond_output)
-    state["last_exact_step"] = int(step_idx)
     state["last_exact_pair"] = int(step_idx)
     state["counts"]["anchor_updates"] += 1
 
 
-def _init_anchor_state(pair_cfg: dict[str, Any]) -> dict[str, Any]:
-    return _init_v2_b2_state(_coerce_aligncache_v2_cfg_input(pair_cfg))
+def _guided_output(
+    cond_output: Sequence[torch.Tensor],
+    uncond_output: Sequence[torch.Tensor],
+    guide_scale: float,
+) -> list[torch.Tensor]:
+    return [
+        uncond.detach().to(torch.float32)
+        + (cond.detach().to(torch.float32) - uncond.detach().to(torch.float32)) * float(guide_scale)
+        for cond, uncond in zip(cond_output, uncond_output)
+    ]
 
 
-def _predict_anchor_uncond(
-    pair_state: dict[str, Any],
-    phase: str,
-    step_idx: int,
-    cond_output: Sequence[torch.Tensor] | None,
-    base_output: Sequence[torch.Tensor] | None,
-    pair_cfg: dict[str, Any],
-    *,
-    record_event: bool = True,
-) -> list[torch.Tensor] | None:
-    return _predict_v2_b2_uncond(
-        pair_state,
-        phase,
-        step_idx,
-        cond_output,
-        base_output,
-        _coerce_aligncache_v2_cfg_input(pair_cfg),
-        record_event=record_event,
-    )
-
-
-def _update_anchor_state(
-    pair_state: dict[str, Any],
-    phase: str,
-    step_idx: int,
-    cond_output: Sequence[torch.Tensor] | None,
-    uncond_output: Sequence[torch.Tensor] | None,
-    learn: bool,
-    pair_cfg: dict[str, Any],
-) -> None:
-    _update_v2_b2_exact_state(
-        pair_state,
-        phase,
-        step_idx,
-        cond_output,
-        uncond_output,
-        learn,
-        _coerce_aligncache_v2_cfg_input(pair_cfg),
-    )
-
-
-def _init_aligncache_feedback_state(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
-    cfg = dict(cfg or {})
-    scale_init = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_SCALE_INIT, cfg.get("scale_init"), float)
+def _init_aligncache_fb2_state(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    config = dict(cfg or {})
+    scale_init = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_SCALE_INIT, config.get("scale_init"), float)
     ratio_ema = {phase: 1.0 / max(float(scale_init[phase]), 1e-6) for phase in _PHASES}
     return {
         "scale": dict(scale_init),
@@ -1172,11 +1252,7 @@ def _init_aligncache_feedback_state(cfg: dict[str, Any] | None = None) -> dict[s
     }
 
 
-def _init_fb_state(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
-    return _init_aligncache_feedback_state(cfg)
-
-
-def _reset_aligncache_feedback_pending_feedback(state: dict[str, Any]) -> None:
+def _reset_aligncache_fb2_pending_feedback(state: dict[str, Any]) -> None:
     state["pending_phase"] = None
     state["pending_budget"] = None
     state["pending_feedback_eligible"] = False
@@ -1184,12 +1260,32 @@ def _reset_aligncache_feedback_pending_feedback(state: dict[str, Any]) -> None:
     state["pending_uncond_draft"] = None
 
 
-def _reset_fb_state(state: dict[str, Any]) -> None:
-    _reset_aligncache_feedback_pending_feedback(state)
+def _fb_pair_age(current_pair_idx: int, last_pair_idx: int | None) -> int:
+    if last_pair_idx is None or int(last_pair_idx) < 0:
+        return int(current_pair_idx) + 1
+    return int(current_pair_idx) - int(last_pair_idx)
 
 
 def _fb_should_collect_feedback(reason: str, budget_next: float | None) -> bool:
     return budget_next is not None and str(reason) == "budget_exact"
+
+
+def _fb_route_pair(
+    state: dict[str, Any],
+    phase: str,
+    pair_idx: int,
+    budget_next: float | None,
+    phase_threshold: float,
+    cfg: dict[str, Any],
+) -> dict[str, Any]:
+    age = _fb_pair_age(pair_idx, state["last_exact_pair_idx"])
+    if budget_next is None:
+        return {"exec_mode": "exact_pair", "reason": "bootstrap", "age": int(age)}
+    if age > int(cfg["age_cap"][phase]):
+        return {"exec_mode": "exact_pair", "reason": "max_age", "age": int(age)}
+    if float(budget_next) < float(phase_threshold):
+        return {"exec_mode": "skip_pair", "reason": "budget_skip", "age": int(age)}
+    return {"exec_mode": "exact_pair", "reason": "budget_exact", "age": int(age)}
 
 
 def _fb_register_pair_decision(
@@ -1230,70 +1326,41 @@ def _fb_register_pair_decision(
         state["summary"][summary_key] += 1
 
 
-def _fb_pair_age(current_pair_idx: int, last_pair_idx: int | None) -> int:
-    if last_pair_idx is None or int(last_pair_idx) < 0:
-        return int(current_pair_idx) + 1
-    return int(current_pair_idx) - int(last_pair_idx)
-
-
 def _fb_complete_pair(state: dict[str, Any], pair_idx: int, exec_mode: str) -> None:
     anchor_age = _fb_pair_age(pair_idx, state["last_exact_pair_idx"])
     state["summary"]["max_anchor_age"] = max(int(state["summary"]["max_anchor_age"]), int(anchor_age))
-    if exec_mode == "exact_pair":
+    if str(exec_mode) == "exact_pair":
         state["last_exact_pair_idx"] = int(pair_idx)
         state["summary"]["exact_pairs"] += 1
     else:
         state["summary"]["skipped_pairs"] += 1
     state["current_exec_mode"] = str(exec_mode)
-    probe = state.get("last_probe")
-    if isinstance(probe, dict):
-        probe["exec_mode"] = str(exec_mode)
+    if isinstance(state.get("last_probe"), dict):
+        state["last_probe"]["exec_mode"] = str(exec_mode)
 
 
-def _fb_guided_output(
-    cond_output: Sequence[torch.Tensor],
-    uncond_output: Sequence[torch.Tensor],
-    guide_scale: float,
-) -> list[torch.Tensor]:
-    return [
-        uncond.detach().to(torch.float32)
-        + (cond.detach().to(torch.float32) - uncond.detach().to(torch.float32)) * float(guide_scale)
-        for cond, uncond in zip(cond_output, uncond_output)
-    ]
-
-
-def _fb_predict_cond_feedback_draft(
-    raw_input: Sequence[torch.Tensor],
-    phase: str,
-    pair_state: dict[str, Any],
-    v2_cfg: dict[str, Any],
-) -> list[torch.Tensor] | None:
-    draft_output = _predict_pair_output(raw_input, pair_state, phase, True, v2_cfg)
+def _fb_predict_cond_feedback_draft(runtime: Any, raw_input: Sequence[torch.Tensor], phase: str) -> list[torch.Tensor] | None:
+    draft_output = _predict_pair_output(runtime, raw_input, phase, True)
+    if draft_output is None and getattr(runtime, "cond_cache", None) is not None:
+        draft_output = [(current + delta).detach() for current, delta in zip(raw_input, runtime.cond_cache)]
     return None if draft_output is None else _clone_tensor_list(draft_output)
 
 
 def _fb_predict_uncond_feedback_draft(
+    runtime: Any,
     raw_input: Sequence[torch.Tensor],
     phase: str,
     pair_idx: int,
     cond_draft: Sequence[torch.Tensor] | None,
-    pair_state: dict[str, Any],
-    v2_cfg: dict[str, Any],
 ) -> list[torch.Tensor] | None:
-    draft_output = _predict_pair_output(raw_input, pair_state, phase, False, v2_cfg)
+    draft_output = _predict_pair_output(runtime, raw_input, phase, False)
+    if draft_output is None and getattr(runtime, "uncond_cache", None) is not None:
+        draft_output = [(current + delta).detach() for current, delta in zip(raw_input, runtime.uncond_cache)]
     if draft_output is None:
         return None
-    b2_output = _predict_v2_b2_uncond(
-        pair_state,
-        phase,
-        pair_idx,
-        cond_draft,
-        draft_output,
-        v2_cfg,
-        record_event=False,
-    )
-    if b2_output is not None:
-        draft_output = b2_output
+    anchor_output = _predict_anchor_uncond(runtime, phase, pair_idx, cond_draft, draft_output, record_event=False)
+    if anchor_output is not None:
+        draft_output = anchor_output
     return _clone_tensor_list(draft_output)
 
 
@@ -1305,7 +1372,7 @@ def _fb_update_from_exact_feedback(
     guide_scale: float,
 ) -> None:
     if not bool(state.get("pending_feedback_eligible")):
-        _reset_aligncache_feedback_pending_feedback(state)
+        _reset_aligncache_fb2_pending_feedback(state)
         return
     phase = state.get("pending_phase")
     budget = state.get("pending_budget")
@@ -1320,19 +1387,19 @@ def _fb_update_from_exact_feedback(
         or uncond_output is None
     ):
         state["summary"]["feedback_skipped_pairs"] += 1
-        _reset_aligncache_feedback_pending_feedback(state)
+        _reset_aligncache_fb2_pending_feedback(state)
         return
-    guided_draft = _fb_guided_output(cond_draft, uncond_draft, guide_scale)
-    guided_exact = _fb_guided_output(cond_output, uncond_output, guide_scale)
+    guided_draft = _guided_output(cond_draft, uncond_draft, guide_scale)
+    guided_exact = _guided_output(cond_output, uncond_output, guide_scale)
     obs_err = _tensor_list_rel_mse(guided_draft, guided_exact)
     if obs_err is None:
         state["summary"]["feedback_skipped_pairs"] += 1
-        _reset_aligncache_feedback_pending_feedback(state)
+        _reset_aligncache_fb2_pending_feedback(state)
         return
     err_ratio = float(obs_err) / max(float(budget), float(cfg["score_eps"]))
     clipped_ratio = _clamp_float(err_ratio, float(cfg["ratio_clip_low"]), float(cfg["ratio_clip_high"]))
     prev_ratio_ema = float(state["ratio_ema"][phase])
-    updated_ratio_ema = float(cfg["ratio_ema_decay"]) * prev_ratio_ema + (1.0 - float(cfg["ratio_ema_decay"])) * clipped_ratio
+    updated_ratio_ema = float(cfg["ratio_ema_decay"]) * prev_ratio_ema + (1.0 - float(cfg["ratio_ema_decay"])) * float(clipped_ratio)
     state["ratio_ema"][phase] = float(updated_ratio_ema)
     state["scale"][phase] = _clamp_float(
         1.0 / max(float(updated_ratio_ema), float(cfg["score_eps"])),
@@ -1340,61 +1407,125 @@ def _fb_update_from_exact_feedback(
         float(cfg["scale_high"][phase]),
     )
     state["summary"]["feedback_updates"] += 1
-    _reset_aligncache_feedback_pending_feedback(state)
+    _reset_aligncache_fb2_pending_feedback(state)
 
 
-def _fb_route_pair(
-    state: dict[str, Any],
-    phase: str,
-    pair_idx: int,
-    budget_next: float | None,
-    phase_threshold: float,
-    cfg: dict[str, Any],
-) -> dict[str, Any]:
-    age = _fb_pair_age(pair_idx, state["last_exact_pair_idx"])
-    if budget_next is None:
-        return {"exec_mode": "exact_pair", "reason": "bootstrap", "age": int(age)}
-    if age > int(cfg["age_cap"][phase]):
-        return {"exec_mode": "exact_pair", "reason": "max_age", "age": int(age)}
-    if float(budget_next) < float(phase_threshold):
-        return {"exec_mode": "skip_pair", "reason": "budget_skip", "age": int(age)}
-    return {"exec_mode": "exact_pair", "reason": "budget_exact", "age": int(age)}
+def _init_pair_predictor_state(cfg: dict[str, Any], *, guide_scale: float) -> Any:
+    runtime = types.SimpleNamespace()
+    runtime.sample_guide_scale = float(guide_scale)
+    runtime.pair_cfg = dict(cfg)
+    runtime.fb_cfg = None
+    runtime.fb_state = None
+    runtime.cond_cache = None
+    runtime.uncond_cache = None
+    runtime.pending_cond = None
+    runtime.pending_cond_exact = False
+    runtime.anchor_state = _init_anchor_state(runtime.pair_cfg)
+    runtime.aux_output = {"cond": None, "uncond": None}
+    _reset_shadow_pair_state(runtime)
+    return runtime
 
 
 def _advance_aligncache_counter(module: Any, *, step_limit: int) -> None:
-    module.cnt = int(getattr(module, "cnt", 0)) + 1
-    if int(getattr(module, "cnt", 0)) >= max(int(step_limit), 1):
-        module.cnt = 0
-        pair_state = getattr(module, "aligncache_pair_state", None)
-        if isinstance(pair_state, dict):
-            _clear_v2_pending_cond_state(pair_state)
-        state = getattr(module, "aligncache_state", None)
-        if isinstance(state, dict):
-            _reset_aligncache_feedback_pending_feedback(state)
+    module.cnt = (int(getattr(module, "cnt", 0)) + 1) % max(int(step_limit), 1)
 
 
-def _split_cfg_batch(raw_input: torch.Tensor, branch_order: Sequence[str]) -> dict[str, torch.Tensor] | None:
-    if not isinstance(raw_input, torch.Tensor):
+def _split_cfg_batch(
+    value: torch.Tensor | Sequence[torch.Tensor],
+    branch_order: Sequence[str],
+) -> dict[str, torch.Tensor] | None:
+    if not branch_order:
         return None
-    if raw_input.ndim < 1 or int(raw_input.shape[0]) < 2 or int(raw_input.shape[0]) % 2 != 0:
+    if isinstance(value, torch.Tensor):
+        branch_count = len(branch_order)
+        if value.shape[0] < branch_count or value.shape[0] % branch_count != 0:
+            return None
+        chunk = value.shape[0] // branch_count
+        pieces = list(torch.split(value, chunk, dim=0))
+        if len(pieces) != branch_count:
+            return None
+        return {branch: piece for branch, piece in zip(branch_order, pieces)}
+    if isinstance(value, Sequence) and len(value) == len(branch_order):
+        branch_values = {}
+        for branch, item in zip(branch_order, value):
+            if not isinstance(item, torch.Tensor):
+                return None
+            branch_values[str(branch)] = item
+        return branch_values
+    return None
+
+
+def _merge_cfg_batch(branches: dict[str, torch.Tensor], branch_order: Sequence[str]) -> torch.Tensor | None:
+    tensors = [branches.get(branch) for branch in branch_order]
+    if any(tensor is None for tensor in tensors):
         return None
-    first, second = raw_input.chunk(2, dim=0)
-    return {str(branch_order[0]): first, str(branch_order[1]): second}
+    return torch.cat([tensor for tensor in tensors if tensor is not None], dim=0)
 
 
-def _merge_cfg_batch(branch_values: dict[str, Sequence[torch.Tensor]], branch_order: Sequence[str]) -> torch.Tensor:
-    return torch.cat(
-        [branch_values[str(branch_order[0])][0], branch_values[str(branch_order[1])][0]],
-        dim=0,
-    )
+def _split_opensora_primary_aux(
+    output: torch.Tensor | Sequence[torch.Tensor],
+    *,
+    raw_input: torch.Tensor | Sequence[torch.Tensor],
+) -> tuple[list[torch.Tensor], list[torch.Tensor] | None]:
+    primary = _tensor_list(output) or []
+    raw = _tensor_list(raw_input) or []
+    if len(primary) != len(raw):
+        return primary, None
+    resolved_primary: list[torch.Tensor] = []
+    resolved_aux: list[torch.Tensor] = []
+    has_aux = False
+    for value, raw_value in zip(primary, raw):
+        raw_channels = int(raw_value.shape[1])
+        output_channels = int(value.shape[1])
+        if output_channels == raw_channels * 2:
+            resolved_primary.append(value[:, :raw_channels])
+            resolved_aux.append(value[:, raw_channels:])
+            has_aux = True
+        else:
+            resolved_primary.append(value)
+    return resolved_primary, resolved_aux if has_aux else None
+
+
+def _compose_opensora_pred_sigma_output(
+    primary_output: Sequence[torch.Tensor],
+    aux_output: Sequence[torch.Tensor] | None,
+) -> torch.Tensor:
+    merged: list[torch.Tensor] = []
+    for index, primary in enumerate(primary_output):
+        if aux_output is None or index >= len(aux_output) or aux_output[index] is None:
+            merged.append(primary)
+            continue
+        aux = aux_output[index]
+        if aux.shape[0] != primary.shape[0] or aux.shape[2:] != primary.shape[2:]:
+            aux = primary.new_zeros((primary.shape[0], aux.shape[1], *primary.shape[2:]))
+        merged.append(torch.cat([primary, aux.to(dtype=primary.dtype)], dim=1))
+    if len(merged) != 1:
+        return torch.cat(merged, dim=0)
+    return merged[0]
+
+
+def _normalize_opensora_pair_output_for_cache(
+    runtime: Any,
+    *,
+    branch: str,
+    raw_input: torch.Tensor | Sequence[torch.Tensor],
+    output: torch.Tensor | Sequence[torch.Tensor],
+) -> list[torch.Tensor]:
+    primary_output, aux_output = _split_opensora_primary_aux(output, raw_input=raw_input)
+    runtime.aux_output[str(branch)] = _clone_tensor_list(aux_output)
+    return primary_output
 
 
 def reset_single_aligncache_state(module: Any, *, sample_steps: int) -> None:
     cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
-    module.aligncache_state = _init_aligncache_feedback_state(cfg)
-    module.aligncache_pair_state = _init_pair_predictor_state(
-        dict(cfg.get("pair_cfg") or cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS)
-    )
+    pair_cfg = _pair_cfg_from_v2_cfg(dict(cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS))
+    guide_scale = float(getattr(module, "sample_guide_scale", cfg.get("guide_scale") or 1.0))
+    runtime = _init_pair_predictor_state(pair_cfg, guide_scale=guide_scale)
+    runtime.fb_cfg = cfg
+    runtime.fb_state = _init_aligncache_fb2_state(cfg)
+    runtime.anchor_state = _init_anchor_state(pair_cfg)
+    module.aligncache_state = runtime.fb_state
+    module.aligncache_pair_state = runtime
     module.aligncache_previous_raw_input_cond = None
     module.aligncache_previous_raw_output_cond = None
     module.aligncache_prev_prev_raw_input_cond = None
@@ -1402,7 +1533,7 @@ def reset_single_aligncache_state(module: Any, *, sample_steps: int) -> None:
     module.accumulated_error = 0.0
     module.cnt = 0
     module.num_steps = max(int(sample_steps), 1)
-    module.v2_current_phase_threshold = None
+    module.v2_current_phase_threshold = float(cfg.get("base_thresh", 0.0) or 0.0)
 
 
 def prepare_single_aligncache_step(
@@ -1413,7 +1544,7 @@ def prepare_single_aligncache_step(
     if not bool(getattr(module, "enable_aligncache", False)):
         return None
     branch_order = tuple(getattr(module, "aligncache_branch_order", ()) or ())
-    if len(branch_order) != 2 or not isinstance(raw_input, torch.Tensor):
+    if len(branch_order) != 2:
         return {
             "kind": "noop",
             "phase": "mid",
@@ -1430,16 +1561,19 @@ def prepare_single_aligncache_step(
             "exec_mode": "exact",
             "pair_exec_mode": "exact_pair",
         }
+
     cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
     if not cfg:
-        reset_single_aligncache_state(module, sample_steps=int(getattr(module, "num_steps", 1)))
+        reset_single_aligncache_state(module, sample_steps=max(int(getattr(module, "num_steps", 1) or 1), 1))
         cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
     state = getattr(module, "aligncache_state")
-    pair_state = getattr(module, "aligncache_pair_state")
-    v2_cfg = dict(cfg.get("v2_cfg") or _coerce_aligncache_v2_cfg_input(cfg.get("pair_cfg")))
+    runtime = getattr(module, "aligncache_pair_state")
+    runtime.sample_guide_scale = float(getattr(module, "sample_guide_scale", cfg.get("guide_scale") or 5.0))
+
     step_idx = int(getattr(module, "cnt", 0))
-    total_steps = max(int(getattr(module, "num_steps", 1)), 1)
-    phase = _get_phase(step_idx, total_steps, v2_cfg)
+    total_steps = max(int(getattr(module, "num_steps", 1) or 1), 1)
+    pair_cfg = _pair_cfg_from_v2_cfg(dict(cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS))
+    phase = _get_phase(step_idx, total_steps, pair_cfg)
     base_phase_threshold = float(cfg["phase_thresholds"][phase])
     threshold_scale = float(state["scale"][phase])
     phase_threshold = float(base_phase_threshold) * float(threshold_scale)
@@ -1448,9 +1582,8 @@ def prepare_single_aligncache_step(
 
     cond_raw_tensor = branches["cond"]
     uncond_raw_tensor = branches["uncond"]
-    cond_raw = _tensor_list(cond_raw_tensor)
-    uncond_raw = _tensor_list(uncond_raw_tensor)
-    assert cond_raw is not None and uncond_raw is not None
+    cond_raw = _tensor_list(cond_raw_tensor) or []
+    uncond_raw = _tensor_list(uncond_raw_tensor) or []
 
     budget_next = None
     pred_change_base = None
@@ -1458,7 +1591,7 @@ def prepare_single_aligncache_step(
         exec_mode = "exact_pair"
         reason = "warmup_tail"
         module.accumulated_error = 0.0
-        anchor_age = _fb_pair_age(step_idx, int(state["last_exact_pair_idx"]))
+        anchor_age = _fb_pair_age(step_idx, state["last_exact_pair_idx"])
         feedback_eligible = False
     else:
         previous_input = getattr(module, "aligncache_previous_raw_input_cond", None)
@@ -1472,7 +1605,9 @@ def prepare_single_aligncache_step(
                     float(cfg["score_eps"]),
                 )
                 budget_next = float(getattr(module, "accumulated_error", 0.0)) + float(pred_change_base)
-        route = _fb_route_pair(state, phase, step_idx, budget_next, phase_threshold, cfg)
+            route = _fb_route_pair(state, phase, step_idx, budget_next, phase_threshold, cfg)
+        else:
+            route = {"exec_mode": "exact_pair", "reason": "bootstrap", "age": _fb_pair_age(step_idx, state["last_exact_pair_idx"])}
         anchor_age = int(route["age"])
         exec_mode = str(route["exec_mode"])
         reason = str(route["reason"])
@@ -1480,35 +1615,13 @@ def prepare_single_aligncache_step(
         if exec_mode == "exact_pair":
             module.accumulated_error = 0.0
         else:
-            module.accumulated_error = float(budget_next or 0.0)
+            module.accumulated_error = 0.0 if budget_next is None else float(budget_next)
 
-    predicted_output = None
-    if exec_mode == "skip_pair":
-        cond_pred = _predict_pair_output(cond_raw, pair_state, phase, True, v2_cfg)
-        if cond_pred is not None:
-            _set_v2_pending_cond_state(pair_state, cond_pred, False)
-        uncond_pred = _predict_pair_output(uncond_raw, pair_state, phase, False, v2_cfg)
-        if cond_pred is not None and uncond_pred is not None:
-            b2_output = _predict_v2_b2_uncond(
-                pair_state,
-                phase,
-                step_idx,
-                pair_state["pending_cond_output"],
-                uncond_pred,
-                v2_cfg,
-            )
-            if b2_output is not None:
-                uncond_pred = b2_output
-            predicted_output = _merge_cfg_batch(
-                {"cond": cond_pred, "uncond": uncond_pred},
-                branch_order,
-            )
-        if predicted_output is None:
-            exec_mode = "exact_pair"
-            reason = "cache_miss_exact"
-            feedback_eligible = False
-            module.accumulated_error = 0.0
-            _clear_v2_pending_cond_state(pair_state)
+    if exec_mode == "skip_pair" and (runtime.cond_cache is None or runtime.uncond_cache is None):
+        exec_mode = "exact_pair"
+        reason = "cache_miss_exact"
+        feedback_eligible = False
+        module.accumulated_error = 0.0
 
     _fb_register_pair_decision(
         state,
@@ -1524,25 +1637,68 @@ def prepare_single_aligncache_step(
         anchor_age=anchor_age,
         feedback_eligible=feedback_eligible,
     )
-    if exec_mode == "exact_pair" and feedback_eligible:
-        state["pending_cond_draft"] = _fb_predict_cond_feedback_draft(cond_raw, phase, pair_state, v2_cfg)
-        if state["pending_cond_draft"] is not None:
-            state["pending_uncond_draft"] = _fb_predict_uncond_feedback_draft(
-                uncond_raw,
-                phase,
-                step_idx,
-                state["pending_cond_draft"],
-                pair_state,
-                v2_cfg,
-            )
+
+    if feedback_eligible:
+        state["pending_cond_draft"] = _fb_predict_cond_feedback_draft(runtime, cond_raw, phase)
+        state["pending_uncond_draft"] = _fb_predict_uncond_feedback_draft(
+            runtime,
+            uncond_raw,
+            phase,
+            step_idx,
+            state["pending_cond_draft"],
+        )
+
     module.aligncache_previous_raw_input_cond = cond_raw_tensor.detach().clone()
+
+    if exec_mode != "skip_pair":
+        return {
+            "kind": "pair",
+            "phase": phase,
+            "step_idx": step_idx,
+            "exec_mode": "exact",
+            "pair_exec_mode": "exact_pair",
+        }
+
+    cond_output = _predict_pair_output(runtime, cond_raw, phase, True)
+    if cond_output is None and runtime.cond_cache is not None:
+        cond_output = [(value + delta).detach() for value, delta in zip(cond_raw, runtime.cond_cache)]
+    uncond_output = _predict_pair_output(runtime, uncond_raw, phase, False)
+    if uncond_output is None and runtime.uncond_cache is not None:
+        uncond_output = [(value + delta).detach() for value, delta in zip(uncond_raw, runtime.uncond_cache)]
+    if cond_output is None or uncond_output is None:
+        return {
+            "kind": "pair",
+            "phase": phase,
+            "step_idx": step_idx,
+            "exec_mode": "exact",
+            "pair_exec_mode": "exact_pair",
+        }
+    anchor_output = _predict_anchor_uncond(runtime, phase, step_idx, cond_output, uncond_output)
+    if anchor_output is not None:
+        uncond_output = anchor_output
+    _set_v2_pending_cond_state(runtime, cond_output, False)
+    predicted_output = _merge_cfg_batch(
+        {
+            "cond": _compose_opensora_pred_sigma_output(cond_output, runtime.aux_output.get("cond")),
+            "uncond": _compose_opensora_pred_sigma_output(uncond_output, runtime.aux_output.get("uncond")),
+        },
+        branch_order,
+    )
+    if predicted_output is None:
+        _clear_v2_pending_cond_state(runtime)
+        return {
+            "kind": "pair",
+            "phase": phase,
+            "step_idx": step_idx,
+            "exec_mode": "exact",
+            "pair_exec_mode": "exact_pair",
+        }
     return {
         "kind": "pair",
         "phase": phase,
-        "step_idx": int(step_idx),
-        "exec_mode": "skip" if exec_mode == "skip_pair" else "exact",
-        "pair_exec_mode": exec_mode,
-        "reason": reason,
+        "step_idx": step_idx,
+        "exec_mode": "skip",
+        "pair_exec_mode": "skip_pair",
         "predicted_output": predicted_output,
     }
 
@@ -1554,40 +1710,42 @@ def complete_single_aligncache_skip(
     predicted_output: torch.Tensor | Sequence[torch.Tensor],
     decision: dict[str, Any],
 ) -> list[torch.Tensor]:
-    if str(decision.get("kind")) != "pair" or not isinstance(raw_input, torch.Tensor) or not isinstance(predicted_output, torch.Tensor):
-        return _tensor_list(predicted_output) or []
+    if str(decision.get("kind")) != "pair":
+        _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
+        return [predicted_output] if isinstance(predicted_output, torch.Tensor) else list(predicted_output)
+
     branch_order = tuple(getattr(module, "aligncache_branch_order", ()) or ())
     raw_branches = _split_cfg_batch(raw_input, branch_order)
-    pred_branches = _split_cfg_batch(predicted_output, branch_order)
-    assert raw_branches is not None and pred_branches is not None
-    pair_state = getattr(module, "aligncache_pair_state")
-    v2_cfg = dict(getattr(module, "aligncache_cfg", {})["v2_cfg"])
-    guide_scale = float(getattr(module, "sample_guide_scale", getattr(module, "aligncache_cfg", {}).get("guide_scale") or 5.0))
-    _write_pair_branch_result(
-        pair_state,
-        _tensor_list(raw_branches["cond"]) or [],
-        _tensor_list(pred_branches["cond"]) or [],
-        True,
-        str(decision["phase"]),
-        False,
-        v2_cfg,
-        guide_scale,
+    output_branches = _split_cfg_batch(predicted_output, branch_order)
+    if raw_branches is None or output_branches is None:
+        _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
+        return [predicted_output] if isinstance(predicted_output, torch.Tensor) else list(predicted_output)
+
+    runtime = getattr(module, "aligncache_pair_state")
+    runtime.sample_guide_scale = float(getattr(module, "sample_guide_scale", 5.0))
+    cond_raw = _tensor_list(raw_branches["cond"]) or []
+    uncond_raw = _tensor_list(raw_branches["uncond"]) or []
+    cond_output = _normalize_opensora_pair_output_for_cache(
+        runtime,
+        branch="cond",
+        raw_input=raw_branches["cond"],
+        output=output_branches["cond"],
     )
-    _write_pair_branch_result(
-        pair_state,
-        _tensor_list(raw_branches["uncond"]) or [],
-        _tensor_list(pred_branches["uncond"]) or [],
-        False,
-        str(decision["phase"]),
-        False,
-        v2_cfg,
-        guide_scale,
+    uncond_output = _normalize_opensora_pair_output_for_cache(
+        runtime,
+        branch="uncond",
+        raw_input=raw_branches["uncond"],
+        output=output_branches["uncond"],
     )
-    _clear_v2_pending_cond_state(pair_state)
+    runtime.cond_cache = [(u - v).detach() for u, v in zip(cond_output, cond_raw)]
+    runtime.uncond_cache = [(u - v).detach() for u, v in zip(uncond_output, uncond_raw)]
+    _write_pair_branch_result(runtime, cond_raw, cond_output, True, str(decision["phase"]), False)
+    _write_pair_branch_result(runtime, uncond_raw, uncond_output, False, str(decision["phase"]), False)
+    _clear_v2_pending_cond_state(runtime)
+    _reset_aligncache_fb2_pending_feedback(getattr(module, "aligncache_state"))
     _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "skip_pair")
-    _reset_aligncache_feedback_pending_feedback(getattr(module, "aligncache_state"))
-    _advance_aligncache_counter(module, step_limit=int(getattr(module, "num_steps", 1)))
-    return [predicted_output]
+    _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
+    return [predicted_output] if isinstance(predicted_output, torch.Tensor) else list(predicted_output)
 
 
 def complete_single_aligncache_exact(
@@ -1597,21 +1755,35 @@ def complete_single_aligncache_exact(
     exact_output: torch.Tensor | Sequence[torch.Tensor],
     decision: dict[str, Any],
 ) -> list[torch.Tensor]:
-    if str(decision.get("kind")) != "pair" or not isinstance(raw_input, torch.Tensor) or not isinstance(exact_output, torch.Tensor):
-        _advance_aligncache_counter(module, step_limit=int(getattr(module, "num_steps", 1)))
-        return _tensor_list(exact_output) or []
+    if str(decision.get("kind")) != "pair":
+        _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
+        return [exact_output] if isinstance(exact_output, torch.Tensor) else list(exact_output)
+
     branch_order = tuple(getattr(module, "aligncache_branch_order", ()) or ())
     raw_branches = _split_cfg_batch(raw_input, branch_order)
     output_branches = _split_cfg_batch(exact_output, branch_order)
-    assert raw_branches is not None and output_branches is not None
-    cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
-    pair_state = getattr(module, "aligncache_pair_state")
-    state = getattr(module, "aligncache_state")
-    v2_cfg = dict(cfg.get("v2_cfg") or _coerce_aligncache_v2_cfg_input(cfg.get("pair_cfg")))
-    guide_scale = float(getattr(module, "sample_guide_scale", cfg.get("guide_scale") or 5.0))
+    if raw_branches is None or output_branches is None:
+        _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
+        return [exact_output] if isinstance(exact_output, torch.Tensor) else list(exact_output)
 
-    cond_raw_tensor = raw_branches["cond"]
-    cond_output_tensor = output_branches["cond"]
+    runtime = getattr(module, "aligncache_pair_state")
+    cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
+    runtime.sample_guide_scale = float(getattr(module, "sample_guide_scale", cfg.get("guide_scale") or 5.0))
+
+    cond_output = _normalize_opensora_pair_output_for_cache(
+        runtime,
+        branch="cond",
+        raw_input=raw_branches["cond"],
+        output=output_branches["cond"],
+    )
+    uncond_output = _normalize_opensora_pair_output_for_cache(
+        runtime,
+        branch="uncond",
+        raw_input=raw_branches["uncond"],
+        output=output_branches["uncond"],
+    )
+    cond_output_tensor = cond_output[0]
+
     previous_output = getattr(module, "aligncache_previous_raw_output_cond", None)
     previous_input = getattr(module, "aligncache_previous_raw_input_cond", None)
     prev_prev_input = getattr(module, "aligncache_prev_prev_raw_input_cond", None)
@@ -1620,302 +1792,273 @@ def complete_single_aligncache_exact(
         input_change = (previous_input - prev_prev_input).abs().mean()
         if float(input_change.item()) > 0.0:
             module.aligncache_k = float(output_change.item()) / max(float(input_change.item()), float(cfg["score_eps"]))
+
     module.aligncache_prev_prev_raw_input_cond = None if previous_input is None else previous_input.detach().clone()
     module.aligncache_previous_raw_output_cond = cond_output_tensor.detach().clone()
 
-    cond_raw = _tensor_list(cond_raw_tensor) or []
+    cond_raw = _tensor_list(raw_branches["cond"]) or []
     uncond_raw = _tensor_list(raw_branches["uncond"]) or []
-    cond_output = _tensor_list(cond_output_tensor) or []
-    uncond_output = _tensor_list(output_branches["uncond"]) or []
-    pair_state["cache"]["cond"] = [(u - v).detach() for u, v in zip(cond_output, cond_raw)]
-    pair_state["cache"]["uncond"] = [(u - v).detach() for u, v in zip(uncond_output, uncond_raw)]
-    _write_pair_branch_result(pair_state, cond_raw, cond_output, True, str(decision["phase"]), True, v2_cfg, guide_scale)
-    _write_pair_branch_result(pair_state, uncond_raw, uncond_output, False, str(decision["phase"]), True, v2_cfg, guide_scale)
-    _update_v2_b2_exact_state(pair_state, str(decision["phase"]), int(decision["step_idx"]), cond_output, uncond_output, True, v2_cfg)
-    _fb_update_from_exact_feedback(state, cfg, cond_output, uncond_output, guide_scale)
-    _clear_v2_pending_cond_state(pair_state)
-    _fb_complete_pair(state, int(decision["step_idx"]), "exact_pair")
-    _advance_aligncache_counter(module, step_limit=int(getattr(module, "num_steps", 1)))
+    runtime.cond_cache = [(u - v).detach() for u, v in zip(cond_output, cond_raw)]
+    runtime.uncond_cache = [(u - v).detach() for u, v in zip(uncond_output, uncond_raw)]
+
+    _write_pair_branch_result(runtime, cond_raw, cond_output, True, str(decision["phase"]), True)
+    _write_pair_branch_result(runtime, uncond_raw, uncond_output, False, str(decision["phase"]), True)
+    _update_anchor_state(runtime, str(decision["phase"]), int(decision["step_idx"]), cond_output, uncond_output, True)
+    _fb_update_from_exact_feedback(
+        getattr(module, "aligncache_state"),
+        cfg,
+        cond_output,
+        uncond_output,
+        runtime.sample_guide_scale,
+    )
+    _clear_v2_pending_cond_state(runtime)
+    _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "exact_pair")
+    _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
+    return [exact_output] if isinstance(exact_output, torch.Tensor) else list(exact_output)
+
+
+def _reset_hunyuan_aligncache_runtime_state(module: Any, *, sample_steps: int) -> None:
+    reset_single_aligncache_state(module, sample_steps=max(int(sample_steps), 1))
+    module.aligncache_previous_raw_input = None
+    module.aligncache_previous_output = None
+    module.aligncache_prev_prev_raw_input = None
+    module.aligncache_cache = None
+    module.aligncache_k = None
+    module.aligncache_accumulated_error = 0.0
+    module.aligncache_predicted_output = None
+
+
+def _prepare_hunyuan_aligncache_single_step(
+    module: Any,
+    *,
+    raw_input: torch.Tensor,
+) -> dict[str, Any]:
+    cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
+    if not cfg or not isinstance(getattr(module, "aligncache_state", None), dict):
+        _reset_hunyuan_aligncache_runtime_state(
+            module,
+            sample_steps=max(int(getattr(module, "num_steps", 1) or 1), 1),
+        )
+        cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
+    state = getattr(module, "aligncache_state")
+
+    step_idx = int(getattr(module, "cnt", 0))
+    total_steps = max(int(getattr(module, "num_steps", 1) or 1), 1)
+    pair_cfg = _pair_cfg_from_v2_cfg(dict(cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS))
+    phase = _get_phase(step_idx, total_steps, pair_cfg)
+    base_phase_threshold = float(cfg["phase_thresholds"][phase])
+    threshold_scale = float(state["scale"][phase])
+    phase_threshold = float(base_phase_threshold) * float(threshold_scale)
+    current_ratio_ema = float(state["ratio_ema"][phase])
+    module.v2_current_phase_threshold = float(base_phase_threshold)
+
+    budget_next = None
+    pred_change_base = None
+    if step_idx < int(cfg["cache_ret_steps"]) or step_idx >= max(total_steps - 1, 0):
+        exec_mode = "exact_pair"
+        reason = "warmup_tail"
+        module.aligncache_accumulated_error = 0.0
+        anchor_age = _fb_pair_age(step_idx, state["last_exact_pair_idx"])
+        feedback_eligible = False
+    else:
+        previous_input = getattr(module, "aligncache_previous_raw_input", None)
+        previous_output = getattr(module, "aligncache_previous_output", None)
+        if previous_input is not None and previous_output is not None and getattr(module, "aligncache_k", None) is not None:
+            raw_input_change = (raw_input - previous_input).abs().mean()
+            output_norm = previous_output.abs().mean()
+            if float(output_norm.item()) > 0.0:
+                pred_change_base = float(getattr(module, "aligncache_k", 0.0)) * float(raw_input_change.item()) / max(
+                    float(output_norm.item()),
+                    float(cfg["score_eps"]),
+                )
+                budget_next = float(getattr(module, "aligncache_accumulated_error", 0.0)) + float(pred_change_base)
+            route = _fb_route_pair(state, phase, step_idx, budget_next, phase_threshold, cfg)
+        else:
+            route = {
+                "exec_mode": "exact_pair",
+                "reason": "bootstrap",
+                "age": _fb_pair_age(step_idx, state["last_exact_pair_idx"]),
+            }
+        anchor_age = int(route["age"])
+        exec_mode = str(route["exec_mode"])
+        reason = str(route["reason"])
+        feedback_eligible = bool(exec_mode == "exact_pair" and _fb_should_collect_feedback(reason, budget_next))
+        if exec_mode == "exact_pair":
+            module.aligncache_accumulated_error = 0.0
+        else:
+            module.aligncache_accumulated_error = 0.0 if budget_next is None else float(budget_next)
+
+    if exec_mode == "skip_pair" and getattr(module, "aligncache_cache", None) is None:
+        exec_mode = "exact_pair"
+        reason = "cache_miss_exact"
+        feedback_eligible = False
+        module.aligncache_accumulated_error = 0.0
+
+    _fb_register_pair_decision(
+        state,
+        phase,
+        exec_mode=exec_mode,
+        reason=reason,
+        budget_next=budget_next,
+        pred_change_base=pred_change_base,
+        base_phase_threshold=base_phase_threshold,
+        phase_threshold=phase_threshold,
+        threshold_scale=threshold_scale,
+        ratio_ema=current_ratio_ema,
+        anchor_age=anchor_age,
+        feedback_eligible=feedback_eligible,
+    )
+
+    runtime = getattr(module, "aligncache_pair_state", None)
+    raw_values = [raw_input]
+    module.aligncache_previous_raw_input = raw_input.detach().clone()
+    module.aligncache_predicted_output = None
+    if feedback_eligible and runtime is not None:
+        predicted_values = _predict_single_output(runtime, raw_values, phase)
+        if predicted_values is not None:
+            predicted_output = predicted_values[0]
+            state["pending_cond_draft"] = [predicted_output.detach().clone()]
+            state["pending_uncond_draft"] = [predicted_output.detach().clone()]
+            module.aligncache_predicted_output = predicted_output.detach().clone()
+
+    if exec_mode != "skip_pair" or runtime is None:
+        return {
+            "kind": "single",
+            "phase": phase,
+            "step_idx": step_idx,
+            "exec_mode": "exact",
+            "pair_exec_mode": "exact_pair",
+        }
+
+    predicted_values = _predict_single_output(runtime, raw_values, phase)
+    if predicted_values is None:
+        return {
+            "kind": "single",
+            "phase": phase,
+            "step_idx": step_idx,
+            "exec_mode": "exact",
+            "pair_exec_mode": "exact_pair",
+        }
+    predicted_output = predicted_values[0]
+    module.aligncache_predicted_output = predicted_output.detach().clone()
+    return {
+        "kind": "single",
+        "phase": phase,
+        "step_idx": step_idx,
+        "exec_mode": "skip",
+        "pair_exec_mode": "skip_pair",
+        "predicted_output": predicted_output,
+    }
+
+
+def _complete_hunyuan_aligncache_single_skip(
+    module: Any,
+    *,
+    predicted_output: torch.Tensor,
+    decision: dict[str, Any],
+) -> list[torch.Tensor]:
+    _reset_aligncache_fb2_pending_feedback(getattr(module, "aligncache_state"))
+    _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "skip_pair")
+    module.aligncache_predicted_output = None
+    _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
+    return [predicted_output]
+
+
+def _complete_hunyuan_aligncache_single_exact(
+    module: Any,
+    *,
+    raw_input: torch.Tensor,
+    exact_output: torch.Tensor,
+    decision: dict[str, Any],
+) -> list[torch.Tensor]:
+    cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
+    previous_output = getattr(module, "aligncache_previous_output", None)
+    previous_input = getattr(module, "aligncache_previous_raw_input", None)
+    prev_prev_input = getattr(module, "aligncache_prev_prev_raw_input", None)
+    if previous_output is not None and previous_input is not None and prev_prev_input is not None:
+        output_change = (exact_output - previous_output).abs().mean()
+        input_change = (previous_input - prev_prev_input).abs().mean()
+        if float(input_change.item()) > 0.0:
+            module.aligncache_k = float(output_change.item()) / max(float(input_change.item()), float(cfg["score_eps"]))
+
+    module.aligncache_prev_prev_raw_input = None if previous_input is None else previous_input.detach().clone()
+    module.aligncache_previous_output = exact_output.detach().clone()
+    module.aligncache_cache = (exact_output - raw_input).detach()
+    runtime = getattr(module, "aligncache_pair_state", None)
+    if runtime is not None:
+        _write_single_branch_result(
+            runtime,
+            [raw_input],
+            [exact_output],
+            str(decision.get("phase", "mid")),
+            True,
+        )
+    _fb_update_from_exact_feedback(
+        getattr(module, "aligncache_state"),
+        cfg,
+        [exact_output],
+        [exact_output],
+        1.0,
+    )
+    module.aligncache_predicted_output = None
+    _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "exact_pair")
+    _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
     return [exact_output]
 
 
-def _reset_wan_pair_state(model: Any) -> None:
-    cfg = dict(getattr(model, "aligncache_cfg", {}) or {})
-    model.aligncache_state = _init_aligncache_feedback_state(cfg)
-    model.aligncache_pair_state = _init_pair_predictor_state(
-        dict(cfg.get("pair_cfg") or cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS)
-    )
-    model.aligncache_previous_raw_input_even = None
-    model.aligncache_previous_raw_output_even = None
-    model.aligncache_prev_prev_raw_input_even = None
-    model.aligncache_k = None
-    model.accumulated_error_even = 0.0
-    model.should_calc_current_pair = True
-    model.cnt = 0
-    model.v2_current_phase_threshold = None
-
-
-def _advance_wan_counter(model: Any) -> None:
-    _advance_aligncache_counter(model, step_limit=int(getattr(model, "num_steps", 1)))
-
-
-def restore_wan_aligncache_state(pipeline: Any) -> None:
-    model = pipeline.model
-    original_forward = getattr(model, "_vbench_aligncache_original_forward", None)
-    if original_forward is not None:
-        model.forward = original_forward
-    model.enable_aligncache = False
-    _reset_wan_pair_state(model)
-
-
-def configure_wan_aligncache(
-    pipeline: Any,
+def prepare_hunyuan_aligncache_step(
+    module: Any,
     *,
-    method_name: str,
-    method_config: dict[str, Any] | None,
-    task: str,
-    sample_steps: int,
+    raw_input: torch.Tensor,
 ) -> dict[str, Any] | None:
-    model = pipeline.model
-    if not hasattr(model, "_vbench_aligncache_original_forward"):
-        model._vbench_aligncache_original_forward = model.forward
-    enabled = str(method_name) == "aligncache"
-    if enabled:
-        model.forward = types.MethodType(_wan_aligncache_forward, model)
-    else:
-        original_forward = getattr(model, "_vbench_aligncache_original_forward", None)
-        if original_forward is not None:
-            model.forward = original_forward
-    model.enable_aligncache = bool(enabled)
-    model.aligncache_cfg = resolve_wan_aligncache_config(
-        task=str(task),
-        method_config=method_config,
-        sample_steps=int(sample_steps),
-    )
-    model.num_steps = max(int(sample_steps) * 2, 1)
-    model.ret_steps = int(model.aligncache_cfg["cache_ret_steps"]) * 2
-    model.cutoff_steps = max(int(sample_steps) * 2 - 2, 1)
-    model.sample_guide_scale = float(
-        getattr(pipeline, "sample_guide_scale", model.aligncache_cfg.get("guide_scale") or getattr(model, "sample_guide_scale", 5.0))
-    )
-    _reset_wan_pair_state(model)
-    if not enabled:
+    if not bool(getattr(module, "enable_aligncache", False)):
         return None
-    return dict(model.aligncache_cfg)
+    if _hunyuan_has_cfg_pair(raw_input):
+        return prepare_single_aligncache_step(module, raw_input=raw_input)
+    return _prepare_hunyuan_aligncache_single_step(module, raw_input=raw_input)
 
 
-def _wan_aligncache_forward(
-    self,
-    x,
-    t,
-    context,
-    seq_len,
-    clip_fea=None,
-    y=None,
-):
-    from torch.cuda import amp
-    from wan.modules.model import sinusoidal_embedding_1d
-
-    if self.model_type in {"i2v", "flf2v"}:
-        assert clip_fea is not None and y is not None
-
-    raw_input = _clone_tensor_list(x)
-    assert raw_input is not None
-    device = self.patch_embedding.weight.device
-    if self.freqs.device != device:
-        self.freqs = self.freqs.to(device)
-
-    if y is not None:
-        x = [torch.cat([current, extra], dim=0) for current, extra in zip(x, y)]
-
-    cfg = dict(getattr(self, "aligncache_cfg", {}) or {})
-    v2_cfg = dict(cfg.get("v2_cfg") or _coerce_aligncache_v2_cfg_input(cfg.get("pair_cfg")))
-    state = getattr(self, "aligncache_state")
-    pair_state = getattr(self, "aligncache_pair_state")
-    is_cond = bool(int(getattr(self, "cnt", 0)) % 2 == 0)
-    pair_idx = int(getattr(self, "cnt", 0)) // 2
-    total_pairs = max(int(getattr(self, "num_steps", 1)) // 2, 1)
-    phase = _get_phase(pair_idx, total_pairs, v2_cfg)
-    base_phase_threshold = float(cfg["phase_thresholds"][phase])
-    threshold_scale = float(state["scale"][phase])
-    current_phase_threshold = float(base_phase_threshold) * float(threshold_scale)
-    current_ratio_ema = float(state["ratio_ema"][phase])
-    self.v2_current_phase_threshold = float(base_phase_threshold)
-
-    if is_cond:
-        pred_change_base = None
-        budget_next = None
-        anchor_age = _fb_pair_age(pair_idx, state["last_exact_pair_idx"])
-        exec_mode = "exact_pair"
-        feedback_eligible = False
-        if self.cnt < self.ret_steps or self.cnt >= self.cutoff_steps:
-            self.should_calc_current_pair = True
-            self.accumulated_error_even = 0.0
-            decision_reason = "warmup_tail"
-        else:
-            if self.aligncache_previous_raw_input_even is not None and self.aligncache_previous_raw_output_even is not None:
-                raw_input_change = torch.cat(
-                    [(u - v).flatten() for u, v in zip(raw_input, self.aligncache_previous_raw_input_even)]
-                ).abs().mean()
-                output_norm = _tensor_list_mean_abs(self.aligncache_previous_raw_output_even)
-                if output_norm is not None and self.aligncache_k is not None:
-                    motion = float(raw_input_change.item()) / max(float(output_norm), float(cfg["score_eps"]))
-                    pred_change_base = float(self.aligncache_k) * float(motion)
-                    budget_next = float(self.accumulated_error_even) + float(pred_change_base)
-            route = _fb_route_pair(state, phase, pair_idx, budget_next, current_phase_threshold, cfg)
-            anchor_age = int(route["age"])
-            exec_mode = str(route["exec_mode"])
-            decision_reason = str(route["reason"])
-            self.should_calc_current_pair = exec_mode == "exact_pair"
-            feedback_eligible = self.should_calc_current_pair and _fb_should_collect_feedback(decision_reason, budget_next)
-            if self.should_calc_current_pair:
-                self.accumulated_error_even = 0.0
-            else:
-                self.accumulated_error_even = float(budget_next)
-
-        if exec_mode == "skip_pair" and (pair_state["cache"]["cond"] is None or pair_state["cache"]["uncond"] is None):
-            self.should_calc_current_pair = True
-            exec_mode = "exact_pair"
-            feedback_eligible = False
-            decision_reason = "cache_miss_exact"
-            self.accumulated_error_even = 0.0
-
-        _fb_register_pair_decision(
-            state,
-            phase,
-            exec_mode=exec_mode,
-            reason=decision_reason,
-            budget_next=budget_next,
-            pred_change_base=pred_change_base,
-            base_phase_threshold=base_phase_threshold,
-            phase_threshold=current_phase_threshold,
-            threshold_scale=threshold_scale,
-            ratio_ema=current_ratio_ema,
-            anchor_age=anchor_age,
-            feedback_eligible=feedback_eligible,
+def complete_hunyuan_aligncache_skip(
+    module: Any,
+    *,
+    raw_input: torch.Tensor,
+    predicted_output: torch.Tensor,
+    decision: dict[str, Any],
+) -> list[torch.Tensor]:
+    if _hunyuan_has_cfg_pair(raw_input):
+        return complete_single_aligncache_skip(
+            module,
+            raw_input=raw_input,
+            predicted_output=predicted_output,
+            decision=decision,
         )
-        if self.should_calc_current_pair and feedback_eligible:
-            state["pending_cond_draft"] = _fb_predict_cond_feedback_draft(raw_input, phase, pair_state, v2_cfg)
-        self.aligncache_previous_raw_input_even = _clone_tensor_list(raw_input)
-
-    if is_cond and not bool(getattr(self, "should_calc_current_pair", True)) and pair_state["cache"]["cond"] is not None:
-        pred_output = _predict_pair_output(raw_input, pair_state, phase, True, v2_cfg)
-        if pred_output is None:
-            pred_output = [(u + v).detach() for u, v in zip(raw_input, pair_state["cache"]["cond"])]
-        _set_v2_pending_cond_state(pair_state, pred_output, False)
-        if bool(v2_cfg.get("enable", True)):
-            _write_pair_branch_result(pair_state, raw_input, pred_output, True, phase, False, v2_cfg, float(self.sample_guide_scale))
-        _advance_wan_counter(self)
-        return [value.float() for value in pred_output]
-
-    current_exec_mode = state.get("current_exec_mode", "exact_pair")
-    if (not is_cond) and current_exec_mode == "skip_pair" and pair_state["cache"]["uncond"] is not None:
-        pred_output = _predict_pair_output(raw_input, pair_state, phase, False, v2_cfg)
-        if pred_output is None:
-            pred_output = [(u + v).detach() for u, v in zip(raw_input, pair_state["cache"]["uncond"])]
-        b2_output = _predict_v2_b2_uncond(
-            pair_state,
-            phase,
-            pair_idx,
-            pair_state.get("pending_cond_output"),
-            pred_output,
-            v2_cfg,
-        )
-        if b2_output is not None:
-            pred_output = b2_output
-        if bool(v2_cfg.get("enable", True)):
-            _write_pair_branch_result(pair_state, raw_input, pred_output, False, phase, False, v2_cfg, float(self.sample_guide_scale))
-        _clear_v2_pending_cond_state(pair_state)
-        _fb_complete_pair(state, pair_idx, "skip_pair")
-        _reset_aligncache_feedback_pending_feedback(state)
-        _advance_wan_counter(self)
-        return [value.float() for value in pred_output]
-
-    if (not is_cond) and bool(getattr(self, "should_calc_current_pair", True)) and bool(state.get("pending_feedback_eligible")) and state["pending_uncond_draft"] is None:
-        state["pending_uncond_draft"] = _fb_predict_uncond_feedback_draft(
-            raw_input,
-            phase,
-            pair_idx,
-            state.get("pending_cond_draft"),
-            pair_state,
-            v2_cfg,
-        )
-
-    x = [self.patch_embedding(value.unsqueeze(0)) for value in x]
-    grid_sizes = torch.stack([torch.tensor(value.shape[2:], dtype=torch.long) for value in x])
-    x = [value.flatten(2).transpose(1, 2) for value in x]
-    seq_lens = torch.tensor([value.size(1) for value in x], dtype=torch.long)
-    assert seq_lens.max() <= seq_len
-    x = torch.cat(
-        [torch.cat([value, value.new_zeros(1, seq_len - value.size(1), value.size(2))], dim=1) for value in x]
+    return _complete_hunyuan_aligncache_single_skip(
+        module,
+        predicted_output=predicted_output,
+        decision=decision,
     )
 
-    with amp.autocast(dtype=torch.float32):
-        e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t).float())
-        e0 = self.time_projection(e).unflatten(1, (6, self.dim))
-        assert e.dtype == torch.float32 and e0.dtype == torch.float32
 
-    context_lens = None
-    context = self.text_embedding(
-        torch.stack([torch.cat([value, value.new_zeros(self.text_len - value.size(0), value.size(1))]) for value in context])
-    )
-    if clip_fea is not None:
-        context_clip = self.img_emb(clip_fea)
-        context = torch.concat([context_clip, context], dim=1)
-
-    kwargs = {
-        "e": e0,
-        "seq_lens": seq_lens,
-        "grid_sizes": grid_sizes,
-        "freqs": self.freqs,
-        "context": context,
-        "context_lens": context_lens,
-    }
-    for block in self.blocks:
-        x = block(x, **kwargs)
-    x = self.head(x, e)
-    output = self.unpatchify(x, grid_sizes)
-
-    if is_cond:
-        if self.aligncache_previous_raw_output_even is not None and self.aligncache_prev_prev_raw_input_even is not None:
-            output_change = torch.cat([(u - v).flatten() for u, v in zip(output, self.aligncache_previous_raw_output_even)]).abs().mean()
-            input_change = torch.cat(
-                [(u - v).flatten() for u, v in zip(self.aligncache_previous_raw_input_even, self.aligncache_prev_prev_raw_input_even)]
-            ).abs().mean()
-            if float(input_change.item()) > 0.0:
-                self.aligncache_k = float(output_change.item()) / max(float(input_change.item()), float(cfg["score_eps"]))
-        self.aligncache_prev_prev_raw_input_even = _clone_tensor_list(self.aligncache_previous_raw_input_even)
-        self.aligncache_previous_raw_output_even = _clone_tensor_list(output)
-        pair_state["cache"]["cond"] = [u.detach() - v.detach() for u, v in zip(output, raw_input)]
-        _set_v2_pending_cond_state(pair_state, output, True)
-        if bool(v2_cfg.get("enable", True)):
-            _write_pair_branch_result(pair_state, raw_input, output, True, phase, True, v2_cfg, float(self.sample_guide_scale))
-        _advance_wan_counter(self)
-        return [value.float() for value in output]
-
-    pair_state["cache"]["uncond"] = [u.detach() - v.detach() for u, v in zip(output, raw_input)]
-    if bool(v2_cfg.get("enable", True)):
-        _write_pair_branch_result(pair_state, raw_input, output, False, phase, True, v2_cfg, float(self.sample_guide_scale))
-        _update_v2_b2_exact_state(
-            pair_state,
-            phase,
-            pair_idx,
-            pair_state.get("pending_cond_output"),
-            output,
-            bool(pair_state.get("pending_cond_exact", False)),
-            v2_cfg,
+def complete_hunyuan_aligncache_exact(
+    module: Any,
+    *,
+    raw_input: torch.Tensor,
+    exact_output: torch.Tensor,
+    decision: dict[str, Any],
+) -> list[torch.Tensor]:
+    if _hunyuan_has_cfg_pair(raw_input):
+        return complete_single_aligncache_exact(
+            module,
+            raw_input=raw_input,
+            exact_output=exact_output,
+            decision=decision,
         )
-    _fb_update_from_exact_feedback(
-        state,
-        cfg,
-        pair_state.get("pending_cond_output"),
-        output,
-        float(self.sample_guide_scale),
+    return _complete_hunyuan_aligncache_single_exact(
+        module,
+        raw_input=raw_input,
+        exact_output=exact_output,
+        decision=decision,
     )
-    _clear_v2_pending_cond_state(pair_state)
-    _fb_complete_pair(state, pair_idx, "exact_pair")
-    _advance_wan_counter(self)
-    return [value.float() for value in output]
 
 
 def configure_hunyuan_aligncache(
@@ -1925,34 +2068,51 @@ def configure_hunyuan_aligncache(
     method_config: dict[str, Any] | None,
     sample_steps: int,
 ) -> dict[str, Any] | None:
-    transformer = sampler.pipeline.transformer
+    pipeline = sampler.pipeline
+    if not getattr(pipeline.__class__, "_aligncache_force_cfg_pair_patch_applied", False):
+        def _aligncache_do_classifier_free_guidance(self):
+            return self._guidance_scale > 1 or bool(getattr(self, "_vbench_force_cfg_pair", False))
+
+        pipeline.__class__.do_classifier_free_guidance = property(_aligncache_do_classifier_free_guidance)
+        pipeline.__class__._aligncache_force_cfg_pair_patch_applied = True
+    transformer = pipeline.transformer
     if not getattr(transformer, "_vbench_teacache_patch_applied", False):
         transformer.forward = types.MethodType(_hunyuan_teacache_forward, transformer)
         transformer._vbench_teacache_patch_applied = True
+
     enabled = str(method_name) == "aligncache"
     transformer.enable_aligncache = bool(enabled)
-    transformer.aligncache_cfg = resolve_hunyuan_aligncache_config(method_config, sample_steps=int(sample_steps))
+    if enabled:
+        transformer.enable_teacache = False
+        transformer.enable_easycache = False
+        transformer.aligncache_cfg = resolve_hunyuan_aligncache_config(
+            method_config,
+            sample_steps=int(sample_steps),
+        )
+    else:
+        transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
+    pipeline._vbench_force_cfg_pair = bool(enabled and transformer.aligncache_cfg.get("force_cfg_pair", True))
     transformer.aligncache_branch_order = ("uncond", "cond")
-    reset_single_aligncache_state(transformer, sample_steps=int(sample_steps))
+    _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
     if not enabled:
         return None
     return dict(transformer.aligncache_cfg)
 
 
-def configure_opensora_aligncache(
-    model: Any,
-    *,
-    enabled: bool,
-    method_config: dict[str, Any] | None,
-    sample_steps: int,
-) -> dict[str, Any] | None:
-    model.enable_aligncache = bool(enabled)
-    model.aligncache_cfg = resolve_opensora_aligncache_config(method_config, sample_steps=int(sample_steps))
-    model.aligncache_branch_order = ("cond", "uncond")
-    reset_single_aligncache_state(model, sample_steps=int(sample_steps))
-    if not enabled:
-        return None
-    return dict(model.aligncache_cfg)
+def restore_hunyuan_aligncache_state(sampler: Any, *, sample_steps: int) -> None:
+    pipeline = sampler.pipeline
+    if not getattr(pipeline.__class__, "_aligncache_force_cfg_pair_patch_applied", False):
+        def _aligncache_do_classifier_free_guidance(self):
+            return self._guidance_scale > 1 or bool(getattr(self, "_vbench_force_cfg_pair", False))
+
+        pipeline.__class__.do_classifier_free_guidance = property(_aligncache_do_classifier_free_guidance)
+        pipeline.__class__._aligncache_force_cfg_pair_patch_applied = True
+    transformer = pipeline.transformer
+    transformer.enable_aligncache = False
+    transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
+    pipeline._vbench_force_cfg_pair = False
+    transformer.aligncache_branch_order = ("uncond", "cond")
+    _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
 
 
 def _hunyuan_teacache_forward(
@@ -2009,12 +2169,12 @@ def _hunyuan_teacache_forward(
 
     aligncache_decision = None
     if getattr(self, "enable_aligncache", False):
-        aligncache_decision = prepare_single_aligncache_step(
+        aligncache_decision = prepare_hunyuan_aligncache_step(
             self,
             raw_input=raw_input,
         )
         if aligncache_decision is not None and aligncache_decision["exec_mode"] == "skip":
-            predicted_output = complete_single_aligncache_skip(
+            predicted_output = complete_hunyuan_aligncache_skip(
                 self,
                 raw_input=raw_input,
                 predicted_output=aligncache_decision["predicted_output"],
@@ -2129,11 +2289,11 @@ def _hunyuan_teacache_forward(
     img = self.final_layer(img, vec)
     img = self.unpatchify(img, tt, th, tw)
     if getattr(self, "enable_aligncache", False):
-        resolved_output = complete_single_aligncache_exact(
+        resolved_output = complete_hunyuan_aligncache_exact(
             self,
             raw_input=raw_input,
             exact_output=img,
-            decision=aligncache_decision or {"phase": "mid", "step_idx": int(getattr(self, "cnt", 0))},
+            decision=aligncache_decision or {"kind": "single", "phase": "mid", "step_idx": int(getattr(self, "cnt", 0))},
         )[0]
         if return_dict:
             out["x"] = resolved_output
@@ -2188,8 +2348,9 @@ def _str2bool(value: str | bool) -> bool:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--base-thresh", type=float, default=0.025, help="AlignCache base threshold.")
-    parser.add_argument("--warmup-pairs", type=int, default=8, help="Warm-up exact pairs before skipping.")
+    parser.add_argument("--base-thresh", type=float, default=0.024, help="AlignCache base threshold.")
+    parser.add_argument("--warmup-pairs", type=int, default=10, help="Warm-up exact pairs before skipping.")
+    parser.add_argument("--force-cfg-pair", type=_str2bool, default=False, help="Force Hunyuan CFG-pair execution.")
     parser.add_argument(
         "--phase-scale-profile",
         type=str,
@@ -2221,6 +2382,7 @@ def _build_method_config(parsed: argparse.Namespace) -> dict[str, object]:
         "feedback_enabled": True,
         "base_thresh": float(parsed.base_thresh),
         "warmup_pairs": int(parsed.warmup_pairs),
+        "force_cfg_pair": bool(parsed.force_cfg_pair),
         "pair_enable": bool(parsed.pair_enable),
         "pair_aggr": float(parsed.pair_aggr),
         "pair_stride": int(parsed.pair_stride),

@@ -32,6 +32,7 @@ The scripts accept a small set of extra AlignCache controls before the normal Hu
 
 - `--base-thresh`
 - `--warmup-pairs`
+- `--force-cfg-pair`
 - `--phase-scale-profile`
 - `--pair-enable`
 - `--pair-aggr`
@@ -43,3 +44,5 @@ This `aligncache` script is the feedback-enabled AlignCache variant, renamed to 
 - `--ratio-ema-decay`
 - `--ratio-clip-low`
 - `--ratio-clip-high`
+
+The script uses the HunyuanVideo incremental experiment defaults from VBench-exp: `--base-thresh 0.024`, `--warmup-pairs 10`, `--force-cfg-pair false`, phase scales `{early: 1.05, mid: 1.20, late: 1.35}`, and age caps of 6 for all phases.
