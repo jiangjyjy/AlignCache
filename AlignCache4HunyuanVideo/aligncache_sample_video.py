@@ -2356,6 +2356,22 @@ def _str2bool(value: str | bool) -> bool:
     raise argparse.ArgumentTypeError(f"Invalid boolean value: {value!r}")
 
 
+def _parse_hunyuan_base_args(remaining: list[str]) -> argparse.Namespace:
+    try:
+        return parse_hunyuan_args(args=remaining)
+    except TypeError as exc:
+        message = str(exc)
+        if "unexpected keyword argument 'args'" not in message:
+            raise
+
+    original_argv = sys.argv
+    try:
+        sys.argv = [original_argv[0], *remaining]
+        return parse_hunyuan_args()
+    finally:
+        sys.argv = original_argv
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--base-thresh", type=float, default=0.024, help="AlignCache base threshold.")
@@ -2382,7 +2398,7 @@ def _parse_args() -> argparse.Namespace:
         help="Optional path to dump the resolved AlignCache configuration as JSON.",
     )
     aligncache_args, remaining = parser.parse_known_args()
-    args = parse_hunyuan_args(args=remaining)
+    args = _parse_hunyuan_base_args(remaining)
     args.aligncache_args = aligncache_args
     return args
 
