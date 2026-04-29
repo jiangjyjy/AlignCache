@@ -13,11 +13,17 @@ from opensora.utils.pretrained_utils import resolve_pretrained_source, should_us
 
 
 def _resolve_local_pixart_vae_path(from_pretrained: str | None) -> str:
-    env_override = os.getenv("VBENCH_OPENSORA_PIXART_VAE_PATH")
-    if env_override:
-        return env_override
+    for env_var in ("ALIGNCACHE_OPENSORA_PIXART_VAE_PATH", "VBENCH_OPENSORA_PIXART_VAE_PATH"):
+        env_override = os.getenv(env_var)
+        if env_override:
+            return env_override
 
     search_roots: list[Path] = []
+    for env_var in ("ALIGNCACHE_CHECKPOINTS_DIR", "VBENCH_CHECKPOINTS_DIR"):
+        checkpoints_root = os.getenv(env_var)
+        if checkpoints_root:
+            search_roots.append(Path(checkpoints_root).expanduser())
+
     _, local_path = resolve_pretrained_source(from_pretrained)
     if local_path:
         local_target = Path(local_path)

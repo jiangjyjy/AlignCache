@@ -3144,13 +3144,15 @@ def _allow_local_t5_pretrained(cfg) -> None:
 
 def _find_local_pixart_vae(cfg) -> str | None:
     candidates: list[Path] = []
-    env_path = os.getenv("VBENCH_OPENSORA_PIXART_VAE_PATH")
-    if env_path:
-        candidates.append(Path(env_path).expanduser())
+    for env_var in ("ALIGNCACHE_OPENSORA_PIXART_VAE_PATH", "VBENCH_OPENSORA_PIXART_VAE_PATH"):
+        env_path = os.getenv(env_var)
+        if env_path:
+            candidates.append(Path(env_path).expanduser())
 
-    checkpoints_root = os.getenv("VBENCH_CHECKPOINTS_DIR")
-    if checkpoints_root:
-        candidates.append(Path(checkpoints_root).expanduser() / "pixart_sigma_sdxlvae_T5_diffusers")
+    for env_var in ("ALIGNCACHE_CHECKPOINTS_DIR", "VBENCH_CHECKPOINTS_DIR"):
+        checkpoints_root = os.getenv(env_var)
+        if checkpoints_root:
+            candidates.append(Path(checkpoints_root).expanduser() / "pixart_sigma_sdxlvae_T5_diffusers")
 
     vae_cfg = cfg.get("vae", {})
     if hasattr(vae_cfg, "get"):
@@ -3165,8 +3167,8 @@ def _find_local_pixart_vae(cfg) -> str | None:
                     ]
                 )
 
+    candidates.append(_SCRIPT_DIR / "checkpoints" / "pixart_sigma_sdxlvae_T5_diffusers")
     candidates.append(Path.cwd() / "checkpoints" / "pixart_sigma_sdxlvae_T5_diffusers")
-    candidates.append(Path.cwd().parent / "VBench-exp" / "checkpoints" / "pixart_sigma_sdxlvae_T5_diffusers")
 
     for candidate in candidates:
         resolved = candidate.resolve()
