@@ -32,19 +32,19 @@ For FP8 inference, pass `--use-fp8`. If `--dit-weight` is left at the official d
 
 The scripts accept a small set of extra AlignCache controls before the normal HunyuanVideo arguments:
 
-- `--base-thresh`
-- `--warmup-pairs`
-- `--force-cfg-pair`
-- `--phase-scale-profile`
-- `--pair-enable`
-- `--pair-aggr`
-- `--pair-stride`
-- `--anchor-enable`
+- `--base_thresh`
+- `--warmup_pairs`
+- `--force_cfg_pair`
+- `--phase_scale_profile`
+- `--pair_enable`
+- `--pair_aggr`
+- `--pair_stride`
+- `--anchor_enable`
 
 This `aligncache` script is the feedback-enabled AlignCache variant, renamed to `aligncache` for the repository interface. It also accepts:
 
-- `--ratio-ema-decay`
-- `--ratio-clip-low`
-- `--ratio-clip-high`
+- `--fb_ratio_ema_decay`
+- `--fb_ratio_clip_low`
+- `--fb_ratio_clip_high`
 
-The script uses the HunyuanVideo incremental experiment defaults from VBench-exp: `--base-thresh 0.024`, `--warmup-pairs 10`, `--force-cfg-pair false`, phase scales `{early: 1.05, mid: 1.20, late: 1.35}`, and age caps of 6 for all phases.
+The script uses the HunyuanVideo incremental experiment defaults: `--base_thresh 0.024`, `--warmup_pairs 10`, `--force_cfg_pair false`, phase scales `{early: 1.05, mid: 1.20, late: 1.35}`, and age caps of 6 for all phases.
