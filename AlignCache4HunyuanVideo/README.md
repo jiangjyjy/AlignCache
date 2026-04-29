@@ -26,6 +26,8 @@ python AlignCache4HunyuanVideo/aligncache_sample_video.py \
   --seed 42
 ```
 
+For FP8 inference, pass `--use-fp8`. If `--dit-weight` is left at the official default, the script will use `ckpts/hunyuan-video-t2v-720p/transformers/mp_rank_00_model_states_fp8.pt` under `--model-base` and expects the matching `mp_rank_00_model_states_fp8_map.pt` in the same directory. You can also pass `--dit-weight /path/to/mp_rank_00_model_states_fp8.pt` explicitly.
+
 ## Optional AlignCache arguments
 
 The scripts accept a small set of extra AlignCache controls before the normal HunyuanVideo arguments:

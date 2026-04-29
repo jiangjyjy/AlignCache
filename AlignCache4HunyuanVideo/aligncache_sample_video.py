@@ -2345,6 +2345,14 @@ from hyvideo.inference import HunyuanVideoSampler
 from hyvideo.utils.file_utils import save_videos_grid
 
 
+_DEFAULT_HUNYUAN_MODEL_DIRNAME = "hunyuan-video-t2v-720p"
+_DEFAULT_HUNYUAN_WEIGHT = "mp_rank_00_model_states.pt"
+_DEFAULT_HUNYUAN_FP8_WEIGHT = "mp_rank_00_model_states_fp8.pt"
+_OFFICIAL_DEFAULT_DIT_WEIGHT = (
+    f"ckpts/{_DEFAULT_HUNYUAN_MODEL_DIRNAME}/transformers/{_DEFAULT_HUNYUAN_WEIGHT}"
+)
+
+
 def _str2bool(value: str | bool) -> bool:
     if isinstance(value, bool):
         return value
@@ -2403,6 +2411,30 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
+def _is_official_default_dit_weight(value: object) -> bool:
+    normalized = str(value or "").strip().replace("\\", "/")
+    return not normalized or normalized == _OFFICIAL_DEFAULT_DIT_WEIGHT
+
+
+def _resolve_hunyuan_runtime_paths(args: argparse.Namespace) -> Path:
+    models_root_path = Path(args.model_base)
+    if bool(getattr(args, "use_fp8", False)) and _is_official_default_dit_weight(getattr(args, "dit_weight", None)):
+        args.dit_weight = str(
+            models_root_path
+            / _DEFAULT_HUNYUAN_MODEL_DIRNAME
+            / "transformers"
+            / _DEFAULT_HUNYUAN_FP8_WEIGHT
+        )
+
+    if models_root_path.exists() and bool(getattr(args, "use_fp8", False)):
+        dit_weight = Path(args.dit_weight)
+        fp8_map = dit_weight.with_name(f"{dit_weight.stem}_map{dit_weight.suffix}")
+        if not fp8_map.exists():
+            raise ValueError(f"Missing FP8 scale map for --use-fp8: {fp8_map}")
+
+    return models_root_path
+
+
 def _build_method_config(parsed: argparse.Namespace) -> dict[str, object]:
     method_config: dict[str, object] = {
         "feedback_enabled": True,
@@ -2442,7 +2474,7 @@ def main() -> None:
     aligncache_args = args.aligncache_args
     method_config = _build_method_config(aligncache_args)
 
-    models_root_path = Path(args.model_base)
+    models_root_path = _resolve_hunyuan_runtime_paths(args)
     if not models_root_path.exists():
         raise ValueError(f"`model_base` does not exist: {models_root_path}")
 
