@@ -24,6 +24,44 @@ from pathlib import Path
 from typing import Iterable
 
 
+def _install_torch_from_numpy_compat() -> None:
+    original_from_numpy = torch.from_numpy
+
+    if getattr(original_from_numpy, "_aligncache_numpy_compat", False):
+        return
+
+    def _from_numpy_compat(array):
+        try:
+            return original_from_numpy(array)
+        except TypeError as exc:
+            if not isinstance(array, np.ndarray):
+                raise
+            message = str(exc)
+            if "expected np.ndarray" not in message or "got numpy.ndarray" not in message:
+                raise
+
+            torch_dtype = {
+                np.dtype("bool"): torch.bool,
+                np.dtype("float16"): torch.float16,
+                np.dtype("float32"): torch.float32,
+                np.dtype("float64"): torch.float64,
+                np.dtype("complex64"): torch.complex64,
+                np.dtype("complex128"): torch.complex128,
+                np.dtype("int8"): torch.int8,
+                np.dtype("int16"): torch.int16,
+                np.dtype("int32"): torch.int32,
+                np.dtype("int64"): torch.int64,
+                np.dtype("uint8"): torch.uint8,
+            }.get(array.dtype)
+            return torch.tensor(array.tolist(), dtype=torch_dtype)
+
+    _from_numpy_compat._aligncache_numpy_compat = True
+    torch.from_numpy = _from_numpy_compat
+
+
+_install_torch_from_numpy_compat()
+
+
 KNOWN_WAN_TASKS = (
     "t2v-14B",
     "t2v-1.3B",
