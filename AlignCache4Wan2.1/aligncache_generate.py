@@ -20,7 +20,6 @@ import torchvision.transforms.functional as TF
 from tqdm import tqdm
 
 import wan
-import argparse
 from pathlib import Path
 from typing import Iterable
 
@@ -2839,8 +2838,6 @@ def _wan_aligncache_forward(
     y=None,
 ):
     from torch.cuda import amp
-
-    from wan.modules.model import sinusoidal_embedding_1d
 
     if self.model_type in {"i2v", "flf2v"}:
         assert clip_fea is not None and y is not None

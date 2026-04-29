@@ -2146,10 +2146,8 @@ aligncache = types.SimpleNamespace(
 
 import gc
 import types
-from typing import Any
 
 import numpy as np
-import torch
 import torch.distributed as dist
 from einops import rearrange
 
