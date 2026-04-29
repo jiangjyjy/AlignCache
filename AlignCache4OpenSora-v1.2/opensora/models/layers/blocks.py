@@ -53,9 +53,9 @@ def get_layernorm(hidden_size: torch.Tensor, eps: float, affine: bool, use_kerne
 
             return FusedLayerNorm(hidden_size, elementwise_affine=affine, eps=eps)
         except ImportError:
-            raise RuntimeError("FusedLayerNorm not available. Please install apex.")
-    else:
-        return nn.LayerNorm(hidden_size, eps, elementwise_affine=affine)
+            # Some environments have the unrelated PyPI apex package; use the reference layer instead.
+            pass
+    return nn.LayerNorm(hidden_size, eps, elementwise_affine=affine)
 
 
 def modulate(norm_func, x, shift, scale):
