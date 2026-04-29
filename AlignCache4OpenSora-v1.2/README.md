@@ -6,19 +6,38 @@ This directory adds OpenSora v1.2 in the same per-model style used by the EasyCa
 
 ## Layout
 
-This script is standalone.
+This directory is self-contained for the OpenSora Python package used by
+inference:
+
+- `aligncache_inference.py`
+- `opensora/`
+- `configs/opensora-v1-2/inference/sample.py`
 
 A straightforward setup is:
 
 1. Clone this repository.
-2. Copy `AlignCache4OpenSora-v1.2/` into the root of your local OpenSora v1.2 checkout.
-3. Run the scripts from that OpenSora root.
+2. Point the environment variables below to your local checkpoint files.
+3. Run `aligncache_inference.py` directly from this directory or by absolute path.
+
+The script prioritizes the vendored `opensora/` package next to it, so it does
+not need the `opensora` package from VBench-exp or a separate OpenSora checkout.
 
 ## Usage
 
 ```bash
-python AlignCache4OpenSora-v1.2/aligncache_inference.py configs/opensora-v1-2/inference/sample.py \
-  --ckpt-path /path/to/weights \
+cd /root/autodl-tmp/AlignCache
+
+export VBENCH_CHECKPOINTS_DIR=/root/autodl-tmp/VBench-exp/checkpoints
+export VBENCH_OPENSORA_MODEL_PATH=$VBENCH_CHECKPOINTS_DIR/OpenSora-STDiT-v3
+export VBENCH_OPENSORA_VAE_PATH=$VBENCH_CHECKPOINTS_DIR/OpenSora-VAE-v1.2
+export VBENCH_OPENSORA_T5_PATH=$VBENCH_CHECKPOINTS_DIR/t5-v1_1-xxl
+export VBENCH_OPENSORA_PIXART_VAE_PATH=$VBENCH_CHECKPOINTS_DIR/pixart_sigma_sdxlvae_T5_diffusers
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
+python AlignCache4OpenSora-v1.2/aligncache_inference.py \
+  AlignCache4OpenSora-v1.2/configs/opensora-v1-2/inference/sample.py \
+  --ckpt-path "$VBENCH_OPENSORA_MODEL_PATH" \
   --save-dir ./samples \
   --prompt "A cinematic drone shot of waves crashing against black volcanic rocks."
 ```

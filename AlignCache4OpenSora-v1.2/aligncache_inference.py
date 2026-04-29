@@ -3033,6 +3033,10 @@ import time
 from pathlib import Path
 from pprint import pformat
 
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if (_SCRIPT_DIR / "opensora").is_dir() and str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
 import colossalai
 from colossalai.cluster import DistCoordinator
 from mmengine.config import Config
