@@ -151,8 +151,13 @@ from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CON
 from wan.modules.model import sinusoidal_embedding_1d
 from wan.utils.fm_solvers import (FlowDPMSolverMultistepScheduler, get_sampling_sigmas, retrieve_timesteps)
 from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
-from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_image, cache_video, str2bool
+
+try:
+    from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
+except ModuleNotFoundError:
+    DashScopePromptExpander = None
+    QwenPromptExpander = None
 
 warnings.filterwarnings('ignore')
 
@@ -3270,11 +3275,21 @@ def _build_prompt_expander(args, rank):
     if not args.use_prompt_extend:
         return None
     if args.prompt_extend_method == "dashscope":
+        if DashScopePromptExpander is None:
+            raise ModuleNotFoundError(
+                "wan.utils.prompt_extend is required for --use_prompt_extend --prompt_extend_method dashscope, "
+                "but it is not available in this Wan runtime."
+            )
         return DashScopePromptExpander(
             model_name=args.prompt_extend_model,
             is_vl="i2v" in args.task,
         )
     if args.prompt_extend_method == "local_qwen":
+        if QwenPromptExpander is None:
+            raise ModuleNotFoundError(
+                "wan.utils.prompt_extend is required for --use_prompt_extend --prompt_extend_method local_qwen, "
+                "but it is not available in this Wan runtime."
+            )
         return QwenPromptExpander(
             model_name=args.prompt_extend_model,
             is_vl="i2v" in args.task,
