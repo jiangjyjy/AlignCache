@@ -44,20 +44,20 @@ _ALIGNCACHE_V2_DEFAULTS = {
     "scale_ema_decay": 0.85,
     "scale_clamp_low": 0.85,
     "scale_clamp_high": 1.18,
-    "b2_enable": True,
-    "b2_exact_early": True,
-    "b2_max_pred_age_mid": 1,
-    "b2_max_pred_age_late": 2,
-    "b2_cond_rel_cap_mid": 0.0050,
-    "b2_cond_rel_cap_late": 0.0200,
-    "b2_alpha_prior_early": 1.279282,
-    "b2_alpha_prior_mid": 1.018750,
-    "b2_alpha_prior_late": 0.972800,
-    "b2_alpha_ema_decay": 0.85,
-    "b2_blend_mid": 0.35,
-    "b2_blend_late": 0.20,
-    "b2_disagree_rel_cap_mid": 0.0200,
-    "b2_disagree_rel_cap_late": 0.0600,
+    "anchor_enable": True,
+    "anchor_exact_early": True,
+    "anchor_age_mid": 1,
+    "anchor_age_late": 2,
+    "anchor_cond_cap_mid": 0.0050,
+    "anchor_cond_cap_late": 0.0200,
+    "anchor_alpha_early": 1.279282,
+    "anchor_alpha_mid": 1.018750,
+    "anchor_alpha_late": 0.972800,
+    "anchor_alpha_ema": 0.85,
+    "anchor_blend_mid": 0.35,
+    "anchor_blend_late": 0.20,
+    "anchor_diff_cap_mid": 0.0200,
+    "anchor_diff_cap_late": 0.0600,
     "aggressiveness": 0.0,
 }
 
@@ -193,8 +193,8 @@ def _apply_v2_aggressiveness(cfg: dict[str, Any]) -> dict[str, Any]:
     clamp_delta = 0.08 * aggressiveness
     resolved["beta_mid"] = float(resolved["beta_mid"]) * beta_scale
     resolved["beta_late"] = float(resolved["beta_late"]) * beta_scale
-    resolved["b2_blend_mid"] = float(resolved["b2_blend_mid"]) * blend_scale
-    resolved["b2_blend_late"] = float(resolved["b2_blend_late"]) * blend_scale
+    resolved["anchor_blend_mid"] = float(resolved["anchor_blend_mid"]) * blend_scale
+    resolved["anchor_blend_late"] = float(resolved["anchor_blend_late"]) * blend_scale
     resolved["scale_clamp_low"] = max(0.60, float(resolved["scale_clamp_low"]) - clamp_delta)
     resolved["scale_clamp_high"] = max(
         float(resolved["scale_clamp_low"]),
@@ -224,20 +224,20 @@ def _coerce_aligncache_v2_cfg_input(value: Any) -> dict[str, Any]:
         "scale_ema_decay": ("scale_ema_decay", "pair_scale_ema"),
         "scale_clamp_low": ("scale_clamp_low", "pair_scale_low"),
         "scale_clamp_high": ("scale_clamp_high", "pair_scale_high"),
-        "b2_enable": ("b2_enable", "anchor_enable"),
-        "b2_exact_early": ("b2_exact_early", "anchor_exact_early"),
-        "b2_max_pred_age_mid": ("b2_max_pred_age_mid", "anchor_age_mid"),
-        "b2_max_pred_age_late": ("b2_max_pred_age_late", "anchor_age_late"),
-        "b2_cond_rel_cap_mid": ("b2_cond_rel_cap_mid", "anchor_cond_cap_mid"),
-        "b2_cond_rel_cap_late": ("b2_cond_rel_cap_late", "anchor_cond_cap_late"),
-        "b2_alpha_prior_early": ("b2_alpha_prior_early", "anchor_alpha_early"),
-        "b2_alpha_prior_mid": ("b2_alpha_prior_mid", "anchor_alpha_mid"),
-        "b2_alpha_prior_late": ("b2_alpha_prior_late", "anchor_alpha_late"),
-        "b2_alpha_ema_decay": ("b2_alpha_ema_decay", "anchor_alpha_ema"),
-        "b2_blend_mid": ("b2_blend_mid", "anchor_blend_mid"),
-        "b2_blend_late": ("b2_blend_late", "anchor_blend_late"),
-        "b2_disagree_rel_cap_mid": ("b2_disagree_rel_cap_mid", "anchor_diff_cap_mid"),
-        "b2_disagree_rel_cap_late": ("b2_disagree_rel_cap_late", "anchor_diff_cap_late"),
+        "anchor_enable": ("anchor_enable", "b2_enable"),
+        "anchor_exact_early": ("anchor_exact_early", "b2_exact_early"),
+        "anchor_age_mid": ("anchor_age_mid", "b2_max_pred_age_mid"),
+        "anchor_age_late": ("anchor_age_late", "b2_max_pred_age_late"),
+        "anchor_cond_cap_mid": ("anchor_cond_cap_mid", "b2_cond_rel_cap_mid"),
+        "anchor_cond_cap_late": ("anchor_cond_cap_late", "b2_cond_rel_cap_late"),
+        "anchor_alpha_early": ("anchor_alpha_early", "b2_alpha_prior_early"),
+        "anchor_alpha_mid": ("anchor_alpha_mid", "b2_alpha_prior_mid"),
+        "anchor_alpha_late": ("anchor_alpha_late", "b2_alpha_prior_late"),
+        "anchor_alpha_ema": ("anchor_alpha_ema", "b2_alpha_ema_decay"),
+        "anchor_blend_mid": ("anchor_blend_mid", "b2_blend_mid"),
+        "anchor_blend_late": ("anchor_blend_late", "b2_blend_late"),
+        "anchor_diff_cap_mid": ("anchor_diff_cap_mid", "b2_disagree_rel_cap_mid"),
+        "anchor_diff_cap_late": ("anchor_diff_cap_late", "b2_disagree_rel_cap_late"),
         "aggressiveness": ("aggressiveness", "pair_aggr"),
     }
     for key, aliases in alias_map.items():
@@ -276,20 +276,20 @@ def _pair_cfg_from_v2_cfg(v2_cfg: dict[str, Any]) -> dict[str, Any]:
         "scale_ema": float(v2_cfg["scale_ema_decay"]),
         "scale_low": float(v2_cfg["scale_clamp_low"]),
         "scale_high": float(v2_cfg["scale_clamp_high"]),
-        "anchor_enable": bool(v2_cfg["b2_enable"]),
-        "anchor_exact_early": bool(v2_cfg["b2_exact_early"]),
-        "anchor_age_mid": int(v2_cfg["b2_max_pred_age_mid"]),
-        "anchor_age_late": int(v2_cfg["b2_max_pred_age_late"]),
-        "anchor_cond_cap_mid": float(v2_cfg["b2_cond_rel_cap_mid"]),
-        "anchor_cond_cap_late": float(v2_cfg["b2_cond_rel_cap_late"]),
-        "anchor_alpha_early": float(v2_cfg["b2_alpha_prior_early"]),
-        "anchor_alpha_mid": float(v2_cfg["b2_alpha_prior_mid"]),
-        "anchor_alpha_late": float(v2_cfg["b2_alpha_prior_late"]),
-        "anchor_alpha_ema": float(v2_cfg["b2_alpha_ema_decay"]),
-        "anchor_blend_mid": float(v2_cfg["b2_blend_mid"]),
-        "anchor_blend_late": float(v2_cfg["b2_blend_late"]),
-        "anchor_diff_cap_mid": float(v2_cfg["b2_disagree_rel_cap_mid"]),
-        "anchor_diff_cap_late": float(v2_cfg["b2_disagree_rel_cap_late"]),
+        "anchor_enable": bool(v2_cfg["anchor_enable"]),
+        "anchor_exact_early": bool(v2_cfg["anchor_exact_early"]),
+        "anchor_age_mid": int(v2_cfg["anchor_age_mid"]),
+        "anchor_age_late": int(v2_cfg["anchor_age_late"]),
+        "anchor_cond_cap_mid": float(v2_cfg["anchor_cond_cap_mid"]),
+        "anchor_cond_cap_late": float(v2_cfg["anchor_cond_cap_late"]),
+        "anchor_alpha_early": float(v2_cfg["anchor_alpha_early"]),
+        "anchor_alpha_mid": float(v2_cfg["anchor_alpha_mid"]),
+        "anchor_alpha_late": float(v2_cfg["anchor_alpha_late"]),
+        "anchor_alpha_ema": float(v2_cfg["anchor_alpha_ema"]),
+        "anchor_blend_mid": float(v2_cfg["anchor_blend_mid"]),
+        "anchor_blend_late": float(v2_cfg["anchor_blend_late"]),
+        "anchor_diff_cap_mid": float(v2_cfg["anchor_diff_cap_mid"]),
+        "anchor_diff_cap_late": float(v2_cfg["anchor_diff_cap_late"]),
     }
 
 
@@ -1229,7 +1229,7 @@ def _guided_output(
     ]
 
 
-def _init_aligncache_fb2_state(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+def _init_aligncache_feedback_state(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     config = dict(cfg or {})
     scale_init = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_SCALE_INIT, config.get("scale_init"), float)
     ratio_ema = {phase: 1.0 / max(float(scale_init[phase]), 1e-6) for phase in _PHASES}
@@ -1260,7 +1260,7 @@ def _init_aligncache_fb2_state(cfg: dict[str, Any] | None = None) -> dict[str, A
     }
 
 
-def _reset_aligncache_fb2_pending_feedback(state: dict[str, Any]) -> None:
+def _reset_aligncache_pending_feedback(state: dict[str, Any]) -> None:
     state["pending_phase"] = None
     state["pending_budget"] = None
     state["pending_feedback_eligible"] = False
@@ -1380,7 +1380,7 @@ def _fb_update_from_exact_feedback(
     guide_scale: float,
 ) -> None:
     if not bool(state.get("pending_feedback_eligible")):
-        _reset_aligncache_fb2_pending_feedback(state)
+        _reset_aligncache_pending_feedback(state)
         return
     phase = state.get("pending_phase")
     budget = state.get("pending_budget")
@@ -1395,14 +1395,14 @@ def _fb_update_from_exact_feedback(
         or uncond_output is None
     ):
         state["summary"]["feedback_skipped_pairs"] += 1
-        _reset_aligncache_fb2_pending_feedback(state)
+        _reset_aligncache_pending_feedback(state)
         return
     guided_draft = _guided_output(cond_draft, uncond_draft, guide_scale)
     guided_exact = _guided_output(cond_output, uncond_output, guide_scale)
     obs_err = _tensor_list_rel_mse(guided_draft, guided_exact)
     if obs_err is None:
         state["summary"]["feedback_skipped_pairs"] += 1
-        _reset_aligncache_fb2_pending_feedback(state)
+        _reset_aligncache_pending_feedback(state)
         return
     err_ratio = float(obs_err) / max(float(budget), float(cfg["score_eps"]))
     clipped_ratio = _clamp_float(err_ratio, float(cfg["ratio_clip_low"]), float(cfg["ratio_clip_high"]))
@@ -1415,7 +1415,7 @@ def _fb_update_from_exact_feedback(
         float(cfg["scale_high"][phase]),
     )
     state["summary"]["feedback_updates"] += 1
-    _reset_aligncache_fb2_pending_feedback(state)
+    _reset_aligncache_pending_feedback(state)
 
 
 def _init_pair_predictor_state(cfg: dict[str, Any], *, guide_scale: float) -> Any:
@@ -1530,7 +1530,7 @@ def reset_single_aligncache_state(module: Any, *, sample_steps: int) -> None:
     guide_scale = float(getattr(module, "sample_guide_scale", cfg.get("guide_scale") or 1.0))
     runtime = _init_pair_predictor_state(pair_cfg, guide_scale=guide_scale)
     runtime.fb_cfg = cfg
-    runtime.fb_state = _init_aligncache_fb2_state(cfg)
+    runtime.fb_state = _init_aligncache_feedback_state(cfg)
     runtime.anchor_state = _init_anchor_state(pair_cfg)
     module.aligncache_state = runtime.fb_state
     module.aligncache_pair_state = runtime
@@ -1750,7 +1750,7 @@ def complete_single_aligncache_skip(
     _write_pair_branch_result(runtime, cond_raw, cond_output, True, str(decision["phase"]), False)
     _write_pair_branch_result(runtime, uncond_raw, uncond_output, False, str(decision["phase"]), False)
     _clear_v2_pending_cond_state(runtime)
-    _reset_aligncache_fb2_pending_feedback(getattr(module, "aligncache_state"))
+    _reset_aligncache_pending_feedback(getattr(module, "aligncache_state"))
     _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "skip_pair")
     _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
     return [predicted_output] if isinstance(predicted_output, torch.Tensor) else list(predicted_output)
@@ -1965,7 +1965,7 @@ def _complete_hunyuan_aligncache_single_skip(
     predicted_output: torch.Tensor,
     decision: dict[str, Any],
 ) -> list[torch.Tensor]:
-    _reset_aligncache_fb2_pending_feedback(getattr(module, "aligncache_state"))
+    _reset_aligncache_pending_feedback(getattr(module, "aligncache_state"))
     _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "skip_pair")
     module.aligncache_predicted_output = None
     _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
@@ -2339,6 +2339,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import imageio
+import numpy as np
 from loguru import logger
 from hyvideo.config import parse_args as parse_hunyuan_args
 from hyvideo.inference import HunyuanVideoSampler
@@ -2382,24 +2384,70 @@ def _parse_hunyuan_base_args(remaining: list[str]) -> argparse.Namespace:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--base-thresh", type=float, default=0.024, help="AlignCache base threshold.")
-    parser.add_argument("--warmup-pairs", type=int, default=10, help="Warm-up exact pairs before skipping.")
-    parser.add_argument("--force-cfg-pair", type=_str2bool, default=False, help="Force Hunyuan CFG-pair execution.")
+    parser.add_argument("--base_thresh", "--base-thresh", "--thresh", dest="base_thresh", type=float, default=0.024, help="AlignCache base threshold.")
+    parser.add_argument("--warmup_pairs", "--warmup-pairs", "--ret_steps", dest="warmup_pairs", type=int, default=10, help="Warm-up exact pairs before skipping.")
+    parser.add_argument("--force_cfg_pair", "--force-cfg-pair", dest="force_cfg_pair", type=_str2bool, default=False, help="Force Hunyuan CFG-pair execution.")
     parser.add_argument(
+        "--phase_scale_profile",
         "--phase-scale-profile",
         type=str,
         default=None,
         choices=["alignbase", "balanced"],
         help="Optional preset for phase threshold scaling.",
     )
-    parser.add_argument("--pair-enable", type=_str2bool, default=True, help="Enable pair predictor.")
-    parser.add_argument("--pair-aggr", type=float, default=0.0, help="Pair predictor aggressiveness.")
-    parser.add_argument("--pair-stride", type=int, default=64, help="Pair predictor subsample stride.")
-    parser.add_argument("--anchor-enable", type=_str2bool, default=True, help="Enable anchor predictor.")
-    parser.add_argument("--ratio-ema-decay", type=float, default=0.90, help="Threshold feedback EMA decay.")
-    parser.add_argument("--ratio-clip-low", type=float, default=0.85, help="Threshold feedback ratio clip low.")
-    parser.add_argument("--ratio-clip-high", type=float, default=1.25, help="Threshold feedback ratio clip high.")
+    parser.add_argument("--phase_thresh_early", type=float, default=None, help="Optional explicit early-phase threshold override.")
+    parser.add_argument("--phase_thresh_mid", type=float, default=None, help="Optional explicit mid-phase threshold override.")
+    parser.add_argument("--phase_thresh_late", type=float, default=None, help="Optional explicit late-phase threshold override.")
+    parser.add_argument("--phase_scale_early", type=float, default=_HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES["early"], help="Early-phase threshold scale.")
+    parser.add_argument("--phase_scale_mid", type=float, default=_HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES["mid"], help="Mid-phase threshold scale.")
+    parser.add_argument("--phase_scale_late", type=float, default=_HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES["late"], help="Late-phase threshold scale.")
+    parser.add_argument("--fb_ratio_ema_decay", "--ratio-ema-decay", dest="fb_ratio_ema_decay", type=float, default=0.90, help="Threshold feedback EMA decay.")
+    parser.add_argument("--fb_ratio_clip_low", "--ratio-clip-low", dest="fb_ratio_clip_low", type=float, default=0.85, help="Threshold feedback ratio clip low.")
+    parser.add_argument("--fb_ratio_clip_high", "--ratio-clip-high", dest="fb_ratio_clip_high", type=float, default=1.25, help="Threshold feedback ratio clip high.")
+    parser.add_argument("--fb_age_cap_early", type=int, default=_HUNYUAN_ALIGNCACHE_AGE_CAP["early"])
+    parser.add_argument("--fb_age_cap_mid", type=int, default=_HUNYUAN_ALIGNCACHE_AGE_CAP["mid"])
+    parser.add_argument("--fb_age_cap_late", type=int, default=_HUNYUAN_ALIGNCACHE_AGE_CAP["late"])
+    parser.add_argument("--fb_scale_init_early", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_INIT["early"])
+    parser.add_argument("--fb_scale_init_mid", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_INIT["mid"])
+    parser.add_argument("--fb_scale_init_late", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_INIT["late"])
+    parser.add_argument("--fb_scale_low_early", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_LOW["early"])
+    parser.add_argument("--fb_scale_low_mid", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_LOW["mid"])
+    parser.add_argument("--fb_scale_low_late", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_LOW["late"])
+    parser.add_argument("--fb_scale_high_early", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_HIGH["early"])
+    parser.add_argument("--fb_scale_high_mid", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_HIGH["mid"])
+    parser.add_argument("--fb_scale_high_late", type=float, default=_HUNYUAN_ALIGNCACHE_SCALE_HIGH["late"])
+    parser.add_argument("--pair_enable", "--pair-enable", dest="pair_enable", type=_str2bool, default=True, help="Enable pair predictor.")
+    parser.add_argument("--pair_aggr", "--pair-aggr", dest="pair_aggr", type=float, default=0.0, help="Pair predictor aggressiveness.")
+    parser.add_argument("--pair_second_order", dest="pair_second_order", type=_str2bool, default=True)
+    parser.add_argument("--pair_online_scale", dest="pair_online_scale", type=_str2bool, default=True)
+    parser.add_argument("--pair_stride", "--pair-stride", dest="pair_stride", type=int, default=64, help="Pair predictor subsample stride.")
+    parser.add_argument("--pair_ratio_ema", dest="pair_ratio_ema", type=float, default=0.8)
+    parser.add_argument("--pair_dir_ema", dest="pair_dir_ema", type=float, default=0.8)
+    parser.add_argument("--pair_beta_mid", dest="pair_beta_mid", type=float, default=0.35)
+    parser.add_argument("--pair_beta_late", dest="pair_beta_late", type=float, default=0.15)
+    parser.add_argument("--pair_ratio_tol_mid", dest="pair_ratio_tol_mid", type=float, default=0.30)
+    parser.add_argument("--pair_ratio_tol_late", dest="pair_ratio_tol_late", type=float, default=0.18)
+    parser.add_argument("--pair_dir_min_mid", dest="pair_dir_min_mid", type=float, default=0.80)
+    parser.add_argument("--pair_dir_min_late", dest="pair_dir_min_late", type=float, default=0.88)
+    parser.add_argument("--pair_scale_ema", dest="pair_scale_ema", type=float, default=0.85)
+    parser.add_argument("--pair_scale_low", dest="pair_scale_low", type=float, default=0.85)
+    parser.add_argument("--pair_scale_high", dest="pair_scale_high", type=float, default=1.18)
+    parser.add_argument("--anchor_enable", "--anchor-enable", dest="anchor_enable", type=_str2bool, default=True, help="Enable anchor predictor.")
+    parser.add_argument("--anchor_exact_early", dest="anchor_exact_early", type=_str2bool, default=True)
+    parser.add_argument("--anchor_age_mid", dest="anchor_age_mid", type=int, default=1)
+    parser.add_argument("--anchor_age_late", dest="anchor_age_late", type=int, default=2)
+    parser.add_argument("--anchor_cond_cap_mid", dest="anchor_cond_cap_mid", type=float, default=0.0050)
+    parser.add_argument("--anchor_cond_cap_late", dest="anchor_cond_cap_late", type=float, default=0.0200)
+    parser.add_argument("--anchor_alpha_early", dest="anchor_alpha_early", type=float, default=1.279282)
+    parser.add_argument("--anchor_alpha_mid", dest="anchor_alpha_mid", type=float, default=1.018750)
+    parser.add_argument("--anchor_alpha_late", dest="anchor_alpha_late", type=float, default=0.972800)
+    parser.add_argument("--anchor_alpha_ema", dest="anchor_alpha_ema", type=float, default=0.85)
+    parser.add_argument("--anchor_blend_mid", dest="anchor_blend_mid", type=float, default=0.35)
+    parser.add_argument("--anchor_blend_late", dest="anchor_blend_late", type=float, default=0.20)
+    parser.add_argument("--anchor_diff_cap_mid", dest="anchor_diff_cap_mid", type=float, default=0.0200)
+    parser.add_argument("--anchor_diff_cap_late", dest="anchor_diff_cap_late", type=float, default=0.0600)
     parser.add_argument(
+        "--summary_json",
         "--summary-json",
         type=str,
         default=None,
@@ -2441,17 +2489,193 @@ def _build_method_config(parsed: argparse.Namespace) -> dict[str, object]:
         "base_thresh": float(parsed.base_thresh),
         "warmup_pairs": int(parsed.warmup_pairs),
         "force_cfg_pair": bool(parsed.force_cfg_pair),
+        "phase_thresh_early": parsed.phase_thresh_early,
+        "phase_thresh_mid": parsed.phase_thresh_mid,
+        "phase_thresh_late": parsed.phase_thresh_late,
+        "phase_scale_early": float(parsed.phase_scale_early),
+        "phase_scale_mid": float(parsed.phase_scale_mid),
+        "phase_scale_late": float(parsed.phase_scale_late),
+        "fb_ratio_ema_decay": float(parsed.fb_ratio_ema_decay),
+        "fb_ratio_clip_low": float(parsed.fb_ratio_clip_low),
+        "fb_ratio_clip_high": float(parsed.fb_ratio_clip_high),
+        "fb_age_cap_early": int(parsed.fb_age_cap_early),
+        "fb_age_cap_mid": int(parsed.fb_age_cap_mid),
+        "fb_age_cap_late": int(parsed.fb_age_cap_late),
+        "fb_scale_init_early": float(parsed.fb_scale_init_early),
+        "fb_scale_init_mid": float(parsed.fb_scale_init_mid),
+        "fb_scale_init_late": float(parsed.fb_scale_init_late),
+        "fb_scale_low_early": float(parsed.fb_scale_low_early),
+        "fb_scale_low_mid": float(parsed.fb_scale_low_mid),
+        "fb_scale_low_late": float(parsed.fb_scale_low_late),
+        "fb_scale_high_early": float(parsed.fb_scale_high_early),
+        "fb_scale_high_mid": float(parsed.fb_scale_high_mid),
+        "fb_scale_high_late": float(parsed.fb_scale_high_late),
         "pair_enable": bool(parsed.pair_enable),
         "pair_aggr": float(parsed.pair_aggr),
+        "pair_second_order": bool(parsed.pair_second_order),
+        "pair_online_scale": bool(parsed.pair_online_scale),
         "pair_stride": int(parsed.pair_stride),
+        "pair_ratio_ema": float(parsed.pair_ratio_ema),
+        "pair_dir_ema": float(parsed.pair_dir_ema),
+        "pair_beta_mid": float(parsed.pair_beta_mid),
+        "pair_beta_late": float(parsed.pair_beta_late),
+        "pair_ratio_tol_mid": float(parsed.pair_ratio_tol_mid),
+        "pair_ratio_tol_late": float(parsed.pair_ratio_tol_late),
+        "pair_dir_min_mid": float(parsed.pair_dir_min_mid),
+        "pair_dir_min_late": float(parsed.pair_dir_min_late),
+        "pair_scale_ema": float(parsed.pair_scale_ema),
+        "pair_scale_low": float(parsed.pair_scale_low),
+        "pair_scale_high": float(parsed.pair_scale_high),
         "anchor_enable": bool(parsed.anchor_enable),
-        "fb_ratio_ema_decay": float(parsed.ratio_ema_decay),
-        "fb_ratio_clip_low": float(parsed.ratio_clip_low),
-        "fb_ratio_clip_high": float(parsed.ratio_clip_high),
+        "anchor_exact_early": bool(parsed.anchor_exact_early),
+        "anchor_age_mid": int(parsed.anchor_age_mid),
+        "anchor_age_late": int(parsed.anchor_age_late),
+        "anchor_cond_cap_mid": float(parsed.anchor_cond_cap_mid),
+        "anchor_cond_cap_late": float(parsed.anchor_cond_cap_late),
+        "anchor_alpha_early": float(parsed.anchor_alpha_early),
+        "anchor_alpha_mid": float(parsed.anchor_alpha_mid),
+        "anchor_alpha_late": float(parsed.anchor_alpha_late),
+        "anchor_alpha_ema": float(parsed.anchor_alpha_ema),
+        "anchor_blend_mid": float(parsed.anchor_blend_mid),
+        "anchor_blend_late": float(parsed.anchor_blend_late),
+        "anchor_diff_cap_mid": float(parsed.anchor_diff_cap_mid),
+        "anchor_diff_cap_late": float(parsed.anchor_diff_cap_late),
     }
     if parsed.phase_scale_profile:
         method_config["phase_scale_profile"] = str(parsed.phase_scale_profile)
     return method_config
+
+
+def _to_numpy_sample(sample: Any) -> np.ndarray:
+    if isinstance(sample, torch.Tensor):
+        return sample.detach().cpu().float().numpy()
+    return np.asarray(sample)
+
+
+def _coerce_nested_object_array(array: np.ndarray) -> np.ndarray:
+    if array.dtype != object:
+        return array
+    if array.ndim == 0:
+        nested = _to_numpy_sample(array.item())
+        if nested.dtype == object:
+            return _coerce_nested_object_array(nested)
+        return nested
+
+    converted_items: list[np.ndarray] = []
+    for item in list(array):
+        nested = _to_numpy_sample(item)
+        if nested.dtype == object:
+            nested = _coerce_nested_object_array(nested)
+        converted_items.append(nested)
+
+    try:
+        return np.stack(converted_items)
+    except ValueError:
+        return np.asarray(converted_items, dtype=object)
+
+
+def _to_uint8_array(array: np.ndarray) -> np.ndarray:
+    if array.dtype == np.uint8:
+        return array
+    if np.issubdtype(array.dtype, np.floating):
+        array = np.nan_to_num(array, nan=0.0, posinf=1.0, neginf=0.0)
+        if array.size > 0:
+            min_value = float(array.min())
+            max_value = float(array.max())
+        else:
+            min_value = 0.0
+            max_value = 0.0
+        if min_value >= 0.0 and max_value <= 1.0:
+            array = array * 255.0
+        return np.clip(np.rint(array), 0, 255).astype(np.uint8)
+    if np.issubdtype(array.dtype, np.integer):
+        return np.clip(array, 0, 255).astype(np.uint8)
+    raise ValueError(f"Unsupported Hunyuan sample dtype: {array.dtype}")
+
+
+def _normalize_image_array(sample: Any) -> np.ndarray:
+    array = _to_numpy_sample(sample)
+    if array.dtype == object:
+        array = _coerce_nested_object_array(array)
+    if array.dtype == object:
+        raise ValueError("Hunyuan image frames must be numeric, and not object.")
+    if array.ndim == 2:
+        return _to_uint8_array(array)
+    if array.ndim != 3:
+        raise ValueError(f"Unsupported Hunyuan image shape: {tuple(array.shape)}")
+
+    if array.shape[-1] in {1, 3, 4}:
+        image = array
+    elif array.shape[0] in {1, 3, 4}:
+        image = np.transpose(array, (1, 2, 0))
+    else:
+        raise ValueError(f"Unsupported Hunyuan image layout: {tuple(array.shape)}")
+
+    image = _to_uint8_array(image)
+    if image.ndim == 3 and image.shape[-1] == 1:
+        image = image[..., 0]
+    return image
+
+
+def _is_image_like_sample(sample: Any) -> bool:
+    array = _to_numpy_sample(sample)
+    if array.dtype == object:
+        array = _coerce_nested_object_array(array)
+    if array.dtype == object:
+        return False
+    if array.ndim == 2:
+        return True
+    if array.ndim != 3:
+        return False
+    return array.shape[0] in {1, 3, 4} or array.shape[-1] in {1, 3, 4}
+
+
+def _normalize_video_frames(sample: Any) -> list[np.ndarray]:
+    if isinstance(sample, (list, tuple)):
+        if len(sample) == 1 and not _is_image_like_sample(sample[0]):
+            return _normalize_video_frames(sample[0])
+        return [_normalize_image_array(frame) for frame in sample]
+
+    if isinstance(sample, torch.Tensor):
+        tensor = sample.detach().cpu().float()
+        if tensor.ndim == 5 and tensor.shape[0] == 1:
+            tensor = tensor[0]
+        if tensor.ndim != 4:
+            raise ValueError(f"Unsupported Hunyuan video shape: {tuple(tensor.shape)}")
+        frames = (tensor.clamp(0, 1).permute(1, 2, 3, 0).numpy() * 255).round().astype(np.uint8)
+        return [frame for frame in frames]
+
+    array = _to_numpy_sample(sample)
+    if array.dtype == object:
+        array = _coerce_nested_object_array(array)
+    if array.dtype == object:
+        if array.ndim == 0:
+            return _normalize_video_frames(array.item())
+        if array.shape[0] == 1 and not _is_image_like_sample(array[0]):
+            return _normalize_video_frames(array[0])
+        return [_normalize_image_array(frame) for frame in list(array)]
+    if array.ndim == 5 and array.shape[0] == 1:
+        array = array[0]
+    if array.ndim != 4:
+        raise ValueError(f"Unsupported Hunyuan video shape: {tuple(array.shape)}")
+
+    if array.shape[-1] in {1, 3, 4}:
+        frames = array
+    elif array.shape[1] in {1, 3, 4}:
+        frames = np.transpose(array, (0, 2, 3, 1))
+    elif array.shape[0] in {1, 3, 4}:
+        frames = np.transpose(array, (1, 2, 3, 0))
+    else:
+        raise ValueError(f"Unsupported Hunyuan video layout: {tuple(array.shape)}")
+
+    return [_normalize_image_array(frame) for frame in frames]
+
+
+def _write_video_frames(target: Path, sample: Any, *, fps: int) -> None:
+    frames = [_normalize_image_array(frame) for frame in _normalize_video_frames(sample)]
+    with imageio.get_writer(str(target), fps=int(fps)) as writer:
+        for frame in frames:
+            writer.append_data(np.ascontiguousarray(frame))
 
 
 def _save_outputs(*, outputs: dict, save_path: str) -> None:
@@ -2460,12 +2684,17 @@ def _save_outputs(*, outputs: dict, save_path: str) -> None:
     os.makedirs(save_path, exist_ok=True)
     samples = outputs["samples"]
     for index, sample in enumerate(samples):
-        sample = sample.unsqueeze(0)
+        sample = sample.unsqueeze(0) if hasattr(sample, "unsqueeze") else sample
         timestamp = datetime.fromtimestamp(time.time()).strftime("%Y-%m-%d-%H-%M-%S")
         prompt_stub = outputs["prompts"][index][:100].replace("/", "").replace("\n", " ").strip()
         prompt_stub = "_".join(prompt_stub.split()) or "sample"
         output_path = Path(save_path) / f"{timestamp}_aligncache_seed{outputs['seeds'][index]}_{prompt_stub}.mp4"
-        save_videos_grid(sample, str(output_path), fps=24)
+        try:
+            save_videos_grid(sample, str(output_path), fps=24)
+        except ValueError as exc:
+            if "All images have to be numeric" not in str(exc):
+                raise
+            _write_video_frames(output_path, sample, fps=24)
         logger.info("Sample saved to {}", output_path)
 
 
