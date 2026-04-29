@@ -3035,6 +3035,7 @@ from pprint import pformat
 
 import colossalai
 from colossalai.cluster import DistCoordinator
+from mmengine.config import Config
 from mmengine.runner import set_random_seed
 from tqdm import tqdm
 
@@ -3043,7 +3044,7 @@ from opensora.datasets import save_sample
 from opensora.datasets.aspect import get_image_size, get_num_frames
 from opensora.models.text_encoder.t5 import text_preprocessing
 from opensora.registry import MODELS, SCHEDULERS, build_module
-from opensora.utils.config_utils import parse_configs
+from opensora.utils.config_utils import merge_args, parse_args as parse_opensora_args
 from opensora.utils.inference_utils import (
     add_watermark,
     append_generated,
@@ -3105,7 +3106,9 @@ def _load_cfg(remaining_argv: list[str]):
     original_argv = list(sys.argv)
     sys.argv = [sys.argv[0], *remaining_argv]
     try:
-        return parse_configs(training=False)
+        args = parse_opensora_args(training=False)
+        cfg = Config.fromfile(args.config, lazy_import=False)
+        return merge_args(cfg, args, training=False)
     finally:
         sys.argv = original_argv
 
