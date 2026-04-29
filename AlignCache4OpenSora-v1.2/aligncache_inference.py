@@ -3081,27 +3081,73 @@ def _str2bool(value: str | bool) -> bool:
 
 def _parse_aligncache_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--base-thresh", type=float, default=0.11, help="AlignCache base threshold.")
-    parser.add_argument("--warmup-pairs", type=int, default=8, help="Warm-up exact pairs before skipping.")
+    parser.add_argument("--base_thresh", "--base-thresh", "--thresh", dest="base_thresh", type=float, default=0.11)
+    parser.add_argument("--warmup_pairs", "--warmup-pairs", "--ret_steps", dest="warmup_pairs", type=int, default=8)
     parser.add_argument(
+        "--phase_scale_profile",
         "--phase-scale-profile",
+        dest="phase_scale_profile",
         type=str,
         default=None,
         choices=["alignbase", "balanced"],
-        help="Optional preset for phase threshold scaling.",
     )
-    parser.add_argument("--pair-enable", type=_str2bool, default=True, help="Enable pair predictor.")
-    parser.add_argument("--pair-aggr", type=float, default=0.0, help="Pair predictor aggressiveness.")
-    parser.add_argument("--pair-stride", type=int, default=64, help="Pair predictor subsample stride.")
-    parser.add_argument("--anchor-enable", type=_str2bool, default=True, help="Enable anchor predictor.")
-    parser.add_argument("--ratio-ema-decay", type=float, default=0.90, help="Threshold feedback EMA decay.")
-    parser.add_argument("--ratio-clip-low", type=float, default=0.85, help="Threshold feedback ratio clip low.")
-    parser.add_argument("--ratio-clip-high", type=float, default=1.25, help="Threshold feedback ratio clip high.")
+    parser.add_argument("--phase_thresh_early", type=float, default=None)
+    parser.add_argument("--phase_thresh_mid", type=float, default=None)
+    parser.add_argument("--phase_thresh_late", type=float, default=None)
+    parser.add_argument("--phase_scale_early", type=float, default=_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES["early"])
+    parser.add_argument("--phase_scale_mid", type=float, default=_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES["mid"])
+    parser.add_argument("--phase_scale_late", type=float, default=_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES["late"])
+    parser.add_argument("--fb_ratio_ema_decay", "--ratio-ema-decay", dest="fb_ratio_ema_decay", type=float, default=0.90)
+    parser.add_argument("--fb_ratio_clip_low", "--ratio-clip-low", dest="fb_ratio_clip_low", type=float, default=0.85)
+    parser.add_argument("--fb_ratio_clip_high", "--ratio-clip-high", dest="fb_ratio_clip_high", type=float, default=1.25)
+    parser.add_argument("--fb_age_cap_early", type=int, default=_OPENSORA_ALIGNCACHE_AGE_CAP["early"])
+    parser.add_argument("--fb_age_cap_mid", type=int, default=_OPENSORA_ALIGNCACHE_AGE_CAP["mid"])
+    parser.add_argument("--fb_age_cap_late", type=int, default=_OPENSORA_ALIGNCACHE_AGE_CAP["late"])
+    parser.add_argument("--fb_scale_init_early", type=float, default=_ALIGNCACHE_DEFAULT_SCALE_INIT["early"])
+    parser.add_argument("--fb_scale_init_mid", type=float, default=_ALIGNCACHE_DEFAULT_SCALE_INIT["mid"])
+    parser.add_argument("--fb_scale_init_late", type=float, default=_ALIGNCACHE_DEFAULT_SCALE_INIT["late"])
+    parser.add_argument("--fb_scale_low_early", type=float, default=_ALIGNCACHE_DEFAULT_SCALE_LOW["early"])
+    parser.add_argument("--fb_scale_low_mid", type=float, default=_ALIGNCACHE_DEFAULT_SCALE_LOW["mid"])
+    parser.add_argument("--fb_scale_low_late", type=float, default=_ALIGNCACHE_DEFAULT_SCALE_LOW["late"])
+    parser.add_argument("--fb_scale_high_early", type=float, default=_OPENSORA_ALIGNCACHE_SCALE_HIGH["early"])
+    parser.add_argument("--fb_scale_high_mid", type=float, default=_OPENSORA_ALIGNCACHE_SCALE_HIGH["mid"])
+    parser.add_argument("--fb_scale_high_late", type=float, default=_OPENSORA_ALIGNCACHE_SCALE_HIGH["late"])
+    parser.add_argument("--pair_enable", "--pair-enable", dest="pair_enable", type=_str2bool, default=True)
+    parser.add_argument("--pair_aggr", "--pair-aggr", dest="pair_aggr", type=float, default=0.0)
+    parser.add_argument("--pair_second_order", dest="pair_second_order", type=_str2bool, default=True)
+    parser.add_argument("--pair_online_scale", dest="pair_online_scale", type=_str2bool, default=True)
+    parser.add_argument("--pair_stride", "--pair-stride", dest="pair_stride", type=int, default=64)
+    parser.add_argument("--pair_ratio_ema", dest="pair_ratio_ema", type=float, default=0.8)
+    parser.add_argument("--pair_dir_ema", dest="pair_dir_ema", type=float, default=0.8)
+    parser.add_argument("--pair_beta_mid", dest="pair_beta_mid", type=float, default=0.35)
+    parser.add_argument("--pair_beta_late", dest="pair_beta_late", type=float, default=0.15)
+    parser.add_argument("--pair_ratio_tol_mid", dest="pair_ratio_tol_mid", type=float, default=0.30)
+    parser.add_argument("--pair_ratio_tol_late", dest="pair_ratio_tol_late", type=float, default=0.18)
+    parser.add_argument("--pair_dir_min_mid", dest="pair_dir_min_mid", type=float, default=0.80)
+    parser.add_argument("--pair_dir_min_late", dest="pair_dir_min_late", type=float, default=0.88)
+    parser.add_argument("--pair_scale_ema", dest="pair_scale_ema", type=float, default=0.85)
+    parser.add_argument("--pair_scale_low", dest="pair_scale_low", type=float, default=0.85)
+    parser.add_argument("--pair_scale_high", dest="pair_scale_high", type=float, default=1.18)
+    parser.add_argument("--anchor_enable", "--anchor-enable", dest="anchor_enable", type=_str2bool, default=True)
+    parser.add_argument("--anchor_exact_early", dest="anchor_exact_early", type=_str2bool, default=True)
+    parser.add_argument("--anchor_age_mid", dest="anchor_age_mid", type=int, default=1)
+    parser.add_argument("--anchor_age_late", dest="anchor_age_late", type=int, default=2)
+    parser.add_argument("--anchor_cond_cap_mid", dest="anchor_cond_cap_mid", type=float, default=0.0050)
+    parser.add_argument("--anchor_cond_cap_late", dest="anchor_cond_cap_late", type=float, default=0.0200)
+    parser.add_argument("--anchor_alpha_early", dest="anchor_alpha_early", type=float, default=1.279282)
+    parser.add_argument("--anchor_alpha_mid", dest="anchor_alpha_mid", type=float, default=1.018750)
+    parser.add_argument("--anchor_alpha_late", dest="anchor_alpha_late", type=float, default=0.972800)
+    parser.add_argument("--anchor_alpha_ema", dest="anchor_alpha_ema", type=float, default=0.85)
+    parser.add_argument("--anchor_blend_mid", dest="anchor_blend_mid", type=float, default=0.35)
+    parser.add_argument("--anchor_blend_late", dest="anchor_blend_late", type=float, default=0.20)
+    parser.add_argument("--anchor_diff_cap_mid", dest="anchor_diff_cap_mid", type=float, default=0.0200)
+    parser.add_argument("--anchor_diff_cap_late", dest="anchor_diff_cap_late", type=float, default=0.0600)
     parser.add_argument(
+        "--summary_json",
         "--summary-json",
+        dest="summary_json",
         type=str,
         default=None,
-        help="Optional path to dump the resolved AlignCache configuration as JSON.",
     )
     return parser.parse_known_args(sys.argv[1:])
 
@@ -3204,13 +3250,57 @@ def _build_method_config(parsed: argparse.Namespace) -> dict[str, object]:
         "feedback_enabled": True,
         "base_thresh": float(parsed.base_thresh),
         "warmup_pairs": int(parsed.warmup_pairs),
+        "phase_thresh_early": parsed.phase_thresh_early,
+        "phase_thresh_mid": parsed.phase_thresh_mid,
+        "phase_thresh_late": parsed.phase_thresh_late,
+        "phase_scale_early": float(parsed.phase_scale_early),
+        "phase_scale_mid": float(parsed.phase_scale_mid),
+        "phase_scale_late": float(parsed.phase_scale_late),
+        "fb_ratio_ema_decay": float(parsed.fb_ratio_ema_decay),
+        "fb_ratio_clip_low": float(parsed.fb_ratio_clip_low),
+        "fb_ratio_clip_high": float(parsed.fb_ratio_clip_high),
+        "fb_age_cap_early": int(parsed.fb_age_cap_early),
+        "fb_age_cap_mid": int(parsed.fb_age_cap_mid),
+        "fb_age_cap_late": int(parsed.fb_age_cap_late),
+        "fb_scale_init_early": float(parsed.fb_scale_init_early),
+        "fb_scale_init_mid": float(parsed.fb_scale_init_mid),
+        "fb_scale_init_late": float(parsed.fb_scale_init_late),
+        "fb_scale_low_early": float(parsed.fb_scale_low_early),
+        "fb_scale_low_mid": float(parsed.fb_scale_low_mid),
+        "fb_scale_low_late": float(parsed.fb_scale_low_late),
+        "fb_scale_high_early": float(parsed.fb_scale_high_early),
+        "fb_scale_high_mid": float(parsed.fb_scale_high_mid),
+        "fb_scale_high_late": float(parsed.fb_scale_high_late),
         "pair_enable": bool(parsed.pair_enable),
         "pair_aggr": float(parsed.pair_aggr),
+        "pair_second_order": bool(parsed.pair_second_order),
+        "pair_online_scale": bool(parsed.pair_online_scale),
         "pair_stride": int(parsed.pair_stride),
+        "pair_ratio_ema": float(parsed.pair_ratio_ema),
+        "pair_dir_ema": float(parsed.pair_dir_ema),
+        "pair_beta_mid": float(parsed.pair_beta_mid),
+        "pair_beta_late": float(parsed.pair_beta_late),
+        "pair_ratio_tol_mid": float(parsed.pair_ratio_tol_mid),
+        "pair_ratio_tol_late": float(parsed.pair_ratio_tol_late),
+        "pair_dir_min_mid": float(parsed.pair_dir_min_mid),
+        "pair_dir_min_late": float(parsed.pair_dir_min_late),
+        "pair_scale_ema": float(parsed.pair_scale_ema),
+        "pair_scale_low": float(parsed.pair_scale_low),
+        "pair_scale_high": float(parsed.pair_scale_high),
         "anchor_enable": bool(parsed.anchor_enable),
-        "fb_ratio_ema_decay": float(parsed.ratio_ema_decay),
-        "fb_ratio_clip_low": float(parsed.ratio_clip_low),
-        "fb_ratio_clip_high": float(parsed.ratio_clip_high),
+        "anchor_exact_early": bool(parsed.anchor_exact_early),
+        "anchor_age_mid": int(parsed.anchor_age_mid),
+        "anchor_age_late": int(parsed.anchor_age_late),
+        "anchor_cond_cap_mid": float(parsed.anchor_cond_cap_mid),
+        "anchor_cond_cap_late": float(parsed.anchor_cond_cap_late),
+        "anchor_alpha_early": float(parsed.anchor_alpha_early),
+        "anchor_alpha_mid": float(parsed.anchor_alpha_mid),
+        "anchor_alpha_late": float(parsed.anchor_alpha_late),
+        "anchor_alpha_ema": float(parsed.anchor_alpha_ema),
+        "anchor_blend_mid": float(parsed.anchor_blend_mid),
+        "anchor_blend_late": float(parsed.anchor_blend_late),
+        "anchor_diff_cap_mid": float(parsed.anchor_diff_cap_mid),
+        "anchor_diff_cap_late": float(parsed.anchor_diff_cap_late),
     }
     if parsed.phase_scale_profile:
         method_config["phase_scale_profile"] = str(parsed.phase_scale_profile)

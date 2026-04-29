@@ -82,20 +82,53 @@ compatibility, but they are not required.
 
 ## Optional AlignCache arguments
 
-The script accepts a small set of extra AlignCache controls before the normal
-OpenSora arguments:
+Common controls:
 
-- `--base-thresh`
-- `--warmup-pairs`
-- `--phase-scale-profile`
-- `--pair-enable`
-- `--pair-aggr`
-- `--pair-stride`
-- `--anchor-enable`
-- `--ratio-ema-decay`
-- `--ratio-clip-low`
-- `--ratio-clip-high`
+- `--base_thresh`
+- `--warmup_pairs`
+- `--phase_scale_profile`
+- `--fb_ratio_ema_decay`
+- `--fb_ratio_clip_low`
+- `--fb_ratio_clip_high`
 
-The default OpenSora AlignCache settings are `--base-thresh 0.11`,
-`--warmup-pairs 8`, OpenSora-specific phase scaling, and pred-sigma auxiliary
-channel handling.
+V2 pair controls:
+
+- `--pair_enable`
+- `--pair_aggr`
+- `--pair_second_order`
+- `--pair_online_scale`
+- `--pair_stride`
+- `--pair_ratio_ema`
+- `--pair_dir_ema`
+- `--pair_beta_mid`
+- `--pair_beta_late`
+- `--pair_ratio_tol_mid`
+- `--pair_ratio_tol_late`
+- `--pair_dir_min_mid`
+- `--pair_dir_min_late`
+- `--pair_scale_ema`
+- `--pair_scale_low`
+- `--pair_scale_high`
+
+B2 anchor controls:
+
+- `--anchor_enable`
+- `--anchor_exact_early`
+- `--anchor_age_mid`
+- `--anchor_age_late`
+- `--anchor_cond_cap_mid`
+- `--anchor_cond_cap_late`
+- `--anchor_alpha_early`
+- `--anchor_alpha_mid`
+- `--anchor_alpha_late`
+- `--anchor_alpha_ema`
+- `--anchor_blend_mid`
+- `--anchor_blend_late`
+- `--anchor_diff_cap_mid`
+- `--anchor_diff_cap_late`
+
+Legacy hyphenated names such as `--base-thresh` and `--pair-enable` are still
+accepted.
+
+Defaults: `--base_thresh 0.11`, `--warmup_pairs 8`, OpenSora phase scaling, and
+pred-sigma auxiliary channel handling.
