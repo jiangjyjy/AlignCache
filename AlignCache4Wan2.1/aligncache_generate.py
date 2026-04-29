@@ -148,10 +148,16 @@ def normalize_ckpt_dir_for_task(
     return ckpt_text
 
 from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CONFIGS
+from wan.text2video import WanT2V
 from wan.modules.model import sinusoidal_embedding_1d
 from wan.utils.fm_solvers import (FlowDPMSolverMultistepScheduler, get_sampling_sigmas, retrieve_timesteps)
 from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 from wan.utils.utils import cache_image, cache_video, str2bool
+
+try:
+    from wan.image2video import WanI2V
+except ModuleNotFoundError:
+    WanI2V = None
 
 try:
     from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
@@ -3372,7 +3378,7 @@ def generate(args):
             logging.info("Extended prompt: %s", args.prompt)
 
         logging.info("Creating WanT2V pipeline.")
-        pipeline = wan.WanT2V(
+        pipeline = WanT2V(
             config=cfg,
             checkpoint_dir=args.ckpt_dir,
             device_id=device,
@@ -3464,7 +3470,9 @@ def generate(args):
             logging.info("Extended prompt: %s", args.prompt)
 
         logging.info("Creating WanI2V pipeline.")
-        pipeline = wan.WanI2V(
+        if WanI2V is None:
+            raise ModuleNotFoundError("wan.image2video.WanI2V is required for non-T2V Wan tasks but is unavailable.")
+        pipeline = WanI2V(
             config=cfg,
             checkpoint_dir=args.ckpt_dir,
             device_id=device,
