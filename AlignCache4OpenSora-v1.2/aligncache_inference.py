@@ -3113,6 +3113,31 @@ def _load_cfg(remaining_argv: list[str]):
         sys.argv = original_argv
 
 
+def _allow_local_t5_pretrained(cfg) -> None:
+    text_encoder_cfg = cfg.get("text_encoder", {})
+    if not hasattr(text_encoder_cfg, "get"):
+        return
+    source = text_encoder_cfg.get("from_pretrained")
+    if source in (None, ""):
+        return
+
+    source_text = str(source)
+    source_path = Path(source_text).expanduser()
+    if not source_path.is_absolute():
+        source_path = (Path.cwd() / source_path).resolve()
+    if not source_path.exists():
+        return
+
+    from opensora.models.text_encoder import t5 as t5_module
+
+    available_models = getattr(t5_module.T5Embedder, "available_models", None)
+    if not isinstance(available_models, list):
+        return
+    for candidate in (source_text, str(source_path), str(source_path.resolve())):
+        if candidate not in available_models:
+            available_models.append(candidate)
+
+
 def _build_method_config(parsed: argparse.Namespace) -> dict[str, object]:
     method_config: dict[str, object] = {
         "feedback_enabled": True,
@@ -3135,6 +3160,7 @@ def main() -> None:
     torch.set_grad_enabled(False)
     aligncache_args, remaining_argv = _parse_aligncache_args()
     cfg = _load_cfg(remaining_argv)
+    _allow_local_t5_pretrained(cfg)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     cfg_dtype = cfg.get("dtype", "fp32")
