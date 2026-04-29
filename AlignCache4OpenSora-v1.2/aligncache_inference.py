@@ -24,6 +24,7 @@ _HUNYUAN_ALIGNCACHE_V2_DEFAULTS = {"early_end_ratio": 0.18, "late_start_ratio": 
 _OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 0.95, "mid": 1.15, "late": 1.00}
 _OPENSORA_ALIGNCACHE_AGE_CAP = {"early": 5, "mid": 5, "late": 4}
 _OPENSORA_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.10, "late": 1.05}
+_OPENSORA_TEACACHE_COEFFICIENTS = [2.17546007e02, -1.18329252e02, 2.68662585e01, -4.59364272e-02, 4.84426240e-02]
 
 _ALIGNCACHE_V2_DEFAULTS = {
     "enable": True,
@@ -108,6 +109,16 @@ def _coerce_optional_str(value: Any, *, label: str) -> str | None:
     if isinstance(value, str):
         return value.strip()
     raise ValueError(f"{label} must be a string when provided. Received {value!r}.")
+
+
+def _require_non_negative_float(value: float | None, *, label: str) -> None:
+    if value is not None and value < 0:
+        raise ValueError(f"{label} must be non-negative when provided. Received {value!r}.")
+
+
+def _require_non_negative_int(value: int | None, *, label: str) -> None:
+    if value is not None and value < 0:
+        raise ValueError(f"{label} must be non-negative when provided. Received {value!r}.")
 
 
 def _clamp_float(value: float, low: float, high: float) -> float:
@@ -2383,6 +2394,36 @@ def reset_opensora_method_state(model: Any, *, sample_steps: int | None = None) 
     _reset_pab_state(model)
 
 
+def resolve_opensora_teacache_config(method_config: dict[str, Any] | None) -> dict[str, Any]:
+    raw = dict(method_config or {})
+    rel_l1_thresh = _coerce_optional_float(
+        raw.get("rel_l1_thresh", raw.get("teacache_rel_l1_thresh", raw.get("teacache_thresh"))),
+        label="opensora.teacache.rel_l1_thresh",
+    )
+    _require_non_negative_float(rel_l1_thresh, label="opensora.teacache.rel_l1_thresh")
+    return {
+        "rel_l1_thresh": float(0.10 if rel_l1_thresh is None else rel_l1_thresh),
+    }
+
+
+def resolve_opensora_easycache_config(method_config: dict[str, Any] | None) -> dict[str, Any]:
+    raw = dict(method_config or {})
+    thresh = _coerce_optional_float(
+        raw.get("easycache_thresh", raw.get("cache_thresh", raw.get("thresh", raw.get("threshold")))),
+        label="opensora.easycache.easycache_thresh",
+    )
+    ret_steps = _coerce_optional_int(
+        raw.get("ret_steps", raw.get("cache_ret_steps")),
+        label="opensora.easycache.ret_steps",
+    )
+    _require_non_negative_float(thresh, label="opensora.easycache.easycache_thresh")
+    _require_non_negative_int(ret_steps, label="opensora.easycache.ret_steps")
+    return {
+        "easycache_thresh": float(0.08 if thresh is None else thresh),
+        "ret_steps": int(5 if ret_steps is None else ret_steps),
+    }
+
+
 def release_opensora_cuda_memory(*, device: str | None) -> None:
     gc.collect()
     if not torch.cuda.is_available():
@@ -2543,14 +2584,14 @@ def configure_opensora_method(
         return None
 
     if resolved_method_name == "teacache":
-        resolved = teacache.resolve_opensora_teacache_config(method_config)
+        resolved = resolve_opensora_teacache_config(method_config)
         model.enable_teacache = True
         model.rel_l1_thresh = float(resolved["rel_l1_thresh"])
         model.enable_pab = False
         return dict(resolved)
 
     if resolved_method_name == "easycache":
-        resolved = easycache.resolve_opensora_easycache_config(method_config)
+        resolved = resolve_opensora_easycache_config(method_config)
         model.enable_easycache = True
         model.easycache_thresh = float(resolved["easycache_thresh"])
         model.ret_steps = int(resolved["ret_steps"])
@@ -2778,7 +2819,7 @@ def _opensora_accel_forward(
             should_calc = True
             self.accumulated_rel_l1_distance = 0.0
         else:
-            rescale_func = np.poly1d(teacache._OPENSORA_COEFFICIENTS)
+            rescale_func = np.poly1d(_OPENSORA_TEACACHE_COEFFICIENTS)
             self.accumulated_rel_l1_distance += float(
                 rescale_func(_ratio_delta(modulated_inp, self.previous_modulated_input))
             )

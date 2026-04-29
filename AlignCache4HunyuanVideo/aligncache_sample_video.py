@@ -21,6 +21,7 @@ _HUNYUAN_ALIGNCACHE_SCALE_INIT = {"early": 1.00, "mid": 1.00, "late": 1.00}
 _HUNYUAN_ALIGNCACHE_SCALE_LOW = {"early": 0.95, "mid": 0.90, "late": 0.85}
 _HUNYUAN_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.06, "late": 1.00}
 _HUNYUAN_ALIGNCACHE_V2_DEFAULTS = {"early_end_ratio": 0.18, "late_start_ratio": 0.72}
+_HUNYUAN_TEACACHE_COEFFICIENTS = [7.33226126e02, -4.01131952e02, 6.75869174e01, -3.14987800e00, 9.61237896e-02]
 _OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 0.95, "mid": 1.15, "late": 1.00}
 _OPENSORA_ALIGNCACHE_AGE_CAP = {"early": 5, "mid": 5, "late": 4}
 _OPENSORA_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.10, "late": 1.05}
@@ -634,6 +635,13 @@ def _tensor_list(values: torch.Tensor | Sequence[torch.Tensor] | None) -> list[t
     if isinstance(values, torch.Tensor):
         return [values]
     return list(values)
+
+
+def _ratio_delta(current: torch.Tensor, previous: torch.Tensor) -> float:
+    denom = previous.abs().mean()
+    if float(denom) == 0.0:
+        return 0.0
+    return float(((current - previous).abs().mean() / denom).detach().cpu().item())
 
 
 def _hunyuan_has_cfg_pair(raw_input: torch.Tensor | Sequence[torch.Tensor]) -> bool:
@@ -2240,7 +2248,9 @@ def _hunyuan_teacache_forward(
             should_calc = True
             self.accumulated_rel_l1_distance = 0.0
         else:
-            rescale_func = np.poly1d(_HUNYUAN_COEFFICIENTS)
+            import numpy as np
+
+            rescale_func = np.poly1d(_HUNYUAN_TEACACHE_COEFFICIENTS)
             self.accumulated_rel_l1_distance += float(
                 rescale_func(_ratio_delta(modulated_inp, self.previous_modulated_input))
             )
