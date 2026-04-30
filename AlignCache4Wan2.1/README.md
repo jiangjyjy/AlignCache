@@ -15,6 +15,6 @@ python AlignCache4Wan2.1/aligncache_generate.py \
   --base_seed 0
 ```
 
-This `aligncache` script is the feedback-enabled AlignCache variant, renamed to `aligncache` for the repository interface. The directory is intended to be copied into the root of a local Wan2.1 checkout and run from that environment.
+This `aligncache` script is the feedback-enabled AlignCache variant, renamed to `aligncache` for the script interface. The directory is intended to be copied into the root of a local Wan2.1 checkout and run from that environment.
 
-The implementation matches the VBench Wan2.1 T2V AlignCache backend. It supports the vendored T2V tasks (`t2v-1.3B` and `t2v-14B`) with experiment defaults `--task t2v-1.3B`, `--size 832*480`, `--base_thresh 0.065`, `--warmup_pairs 12`, and balanced phase scaling.
+The implementation matches the Wan2.1 T2V AlignCache backend. It supports the listed T2V tasks (`t2v-1.3B` and `t2v-14B`) with experiment defaults `--task t2v-1.3B`, `--size 832*480`, `--base_thresh 0.065`, `--warmup_pairs 12`, and balanced phase scaling.
