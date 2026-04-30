@@ -674,12 +674,12 @@ _HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 1.00, "mid": 1.10, "late"
 _HUNYUAN_ALIGNCACHE_SCALE_INIT = {"early": 1.00, "mid": 1.00, "late": 1.00}
 _HUNYUAN_ALIGNCACHE_SCALE_LOW = {"early": 1.00, "mid": 1.00, "late": 1.00}
 _HUNYUAN_ALIGNCACHE_SCALE_HIGH = {"early": 1.00, "mid": 1.00, "late": 1.00}
-_HUNYUAN_ALIGNCACHE_V2_DEFAULTS = {"early_end_ratio": 0.18, "late_start_ratio": 0.72}
+_HUNYUAN_ALIGNCACHE_PREDICTOR_DEFAULTS = {"early_end_ratio": 0.18, "late_start_ratio": 0.72}
 _OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 0.95, "mid": 1.15, "late": 1.00}
 _OPENSORA_ALIGNCACHE_AGE_CAP = {"early": 5, "mid": 5, "late": 4}
 _OPENSORA_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.10, "late": 1.05}
 
-_ALIGNCACHE_V2_DEFAULTS = {
+_ALIGNCACHE_PREDICTOR_DEFAULTS = {
     "enable": True,
     "early_end_ratio": 0.15,
     "late_start_ratio": 0.86,
@@ -697,20 +697,20 @@ _ALIGNCACHE_V2_DEFAULTS = {
     "scale_ema_decay": 0.85,
     "scale_clamp_low": 0.85,
     "scale_clamp_high": 1.18,
-    "b2_enable": True,
-    "b2_exact_early": True,
-    "b2_max_pred_age_mid": 1,
-    "b2_max_pred_age_late": 2,
-    "b2_cond_rel_cap_mid": 0.0050,
-    "b2_cond_rel_cap_late": 0.0200,
-    "b2_alpha_prior_early": 1.279282,
-    "b2_alpha_prior_mid": 1.018750,
-    "b2_alpha_prior_late": 0.972800,
-    "b2_alpha_ema_decay": 0.85,
-    "b2_blend_mid": 0.35,
-    "b2_blend_late": 0.20,
-    "b2_disagree_rel_cap_mid": 0.0200,
-    "b2_disagree_rel_cap_late": 0.0600,
+    "anchor_enable": True,
+    "anchor_exact_early": True,
+    "anchor_age_mid": 1,
+    "anchor_age_late": 2,
+    "anchor_cond_cap_mid": 0.0050,
+    "anchor_cond_cap_late": 0.0200,
+    "anchor_alpha_early": 1.279282,
+    "anchor_alpha_mid": 1.018750,
+    "anchor_alpha_late": 0.972800,
+    "anchor_alpha_ema": 0.85,
+    "anchor_blend_mid": 0.35,
+    "anchor_blend_late": 0.20,
+    "anchor_diff_cap_mid": 0.0200,
+    "anchor_diff_cap_late": 0.0600,
     "aggressiveness": 0.0,
 }
 
@@ -836,7 +836,7 @@ def _normalize_aligncache_method_config(method_config: dict[str, Any] | None) ->
     return raw
 
 
-def _apply_v2_aggressiveness(cfg: dict[str, Any]) -> dict[str, Any]:
+def _apply_predictor_aggressiveness(cfg: dict[str, Any]) -> dict[str, Any]:
     resolved = dict(cfg)
     aggressiveness = float(resolved.get("aggressiveness") or 0.0)
     if abs(aggressiveness) <= 1e-8:
@@ -846,8 +846,8 @@ def _apply_v2_aggressiveness(cfg: dict[str, Any]) -> dict[str, Any]:
     clamp_delta = 0.08 * aggressiveness
     resolved["beta_mid"] = float(resolved["beta_mid"]) * beta_scale
     resolved["beta_late"] = float(resolved["beta_late"]) * beta_scale
-    resolved["b2_blend_mid"] = float(resolved["b2_blend_mid"]) * blend_scale
-    resolved["b2_blend_late"] = float(resolved["b2_blend_late"]) * blend_scale
+    resolved["anchor_blend_mid"] = float(resolved["anchor_blend_mid"]) * blend_scale
+    resolved["anchor_blend_late"] = float(resolved["anchor_blend_late"]) * blend_scale
     resolved["scale_clamp_low"] = max(0.60, float(resolved["scale_clamp_low"]) - clamp_delta)
     resolved["scale_clamp_high"] = max(
         float(resolved["scale_clamp_low"]),
@@ -856,9 +856,9 @@ def _apply_v2_aggressiveness(cfg: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
-def _coerce_aligncache_v2_cfg_input(value: Any) -> dict[str, Any]:
+def _coerce_aligncache_predictor_cfg_input(value: Any) -> dict[str, Any]:
     source = dict(value or {})
-    resolved = dict(_ALIGNCACHE_V2_DEFAULTS)
+    resolved = dict(_ALIGNCACHE_PREDICTOR_DEFAULTS)
     alias_map = {
         "enable": ("enable", "pair_enable"),
         "early_end_ratio": ("early_end_ratio", "pair_early_end_ratio"),
@@ -877,20 +877,20 @@ def _coerce_aligncache_v2_cfg_input(value: Any) -> dict[str, Any]:
         "scale_ema_decay": ("scale_ema_decay", "pair_scale_ema"),
         "scale_clamp_low": ("scale_clamp_low", "pair_scale_low"),
         "scale_clamp_high": ("scale_clamp_high", "pair_scale_high"),
-        "b2_enable": ("b2_enable", "anchor_enable"),
-        "b2_exact_early": ("b2_exact_early", "anchor_exact_early"),
-        "b2_max_pred_age_mid": ("b2_max_pred_age_mid", "anchor_age_mid"),
-        "b2_max_pred_age_late": ("b2_max_pred_age_late", "anchor_age_late"),
-        "b2_cond_rel_cap_mid": ("b2_cond_rel_cap_mid", "anchor_cond_cap_mid"),
-        "b2_cond_rel_cap_late": ("b2_cond_rel_cap_late", "anchor_cond_cap_late"),
-        "b2_alpha_prior_early": ("b2_alpha_prior_early", "anchor_alpha_early"),
-        "b2_alpha_prior_mid": ("b2_alpha_prior_mid", "anchor_alpha_mid"),
-        "b2_alpha_prior_late": ("b2_alpha_prior_late", "anchor_alpha_late"),
-        "b2_alpha_ema_decay": ("b2_alpha_ema_decay", "anchor_alpha_ema"),
-        "b2_blend_mid": ("b2_blend_mid", "anchor_blend_mid"),
-        "b2_blend_late": ("b2_blend_late", "anchor_blend_late"),
-        "b2_disagree_rel_cap_mid": ("b2_disagree_rel_cap_mid", "anchor_diff_cap_mid"),
-        "b2_disagree_rel_cap_late": ("b2_disagree_rel_cap_late", "anchor_diff_cap_late"),
+        "anchor_enable": ("anchor_enable",),
+        "anchor_exact_early": ("anchor_exact_early",),
+        "anchor_age_mid": ("anchor_age_mid",),
+        "anchor_age_late": ("anchor_age_late",),
+        "anchor_cond_cap_mid": ("anchor_cond_cap_mid",),
+        "anchor_cond_cap_late": ("anchor_cond_cap_late",),
+        "anchor_alpha_early": ("anchor_alpha_early",),
+        "anchor_alpha_mid": ("anchor_alpha_mid",),
+        "anchor_alpha_late": ("anchor_alpha_late",),
+        "anchor_alpha_ema": ("anchor_alpha_ema",),
+        "anchor_blend_mid": ("anchor_blend_mid",),
+        "anchor_blend_late": ("anchor_blend_late",),
+        "anchor_diff_cap_mid": ("anchor_diff_cap_mid",),
+        "anchor_diff_cap_late": ("anchor_diff_cap_late",),
         "aggressiveness": ("aggressiveness", "pair_aggr"),
     }
     for key, aliases in alias_map.items():
@@ -901,48 +901,48 @@ def _coerce_aligncache_v2_cfg_input(value: Any) -> dict[str, Any]:
                 break
         if value_found in (None, ""):
             continue
-        if isinstance(_ALIGNCACHE_V2_DEFAULTS[key], bool):
-            resolved[key] = bool(_coerce_optional_bool(value_found, label=f"aligncache.v2.{key}"))
-        elif isinstance(_ALIGNCACHE_V2_DEFAULTS[key], int):
-            resolved[key] = int(_coerce_optional_int(value_found, label=f"aligncache.v2.{key}"))
+        if isinstance(_ALIGNCACHE_PREDICTOR_DEFAULTS[key], bool):
+            resolved[key] = bool(_coerce_optional_bool(value_found, label=f"aligncache.predictor.{key}"))
+        elif isinstance(_ALIGNCACHE_PREDICTOR_DEFAULTS[key], int):
+            resolved[key] = int(_coerce_optional_int(value_found, label=f"aligncache.predictor.{key}"))
         else:
-            resolved[key] = float(_coerce_optional_float(value_found, label=f"aligncache.v2.{key}"))
-    return _apply_v2_aggressiveness(resolved)
+            resolved[key] = float(_coerce_optional_float(value_found, label=f"aligncache.predictor.{key}"))
+    return _apply_predictor_aggressiveness(resolved)
 
 
-def _pair_cfg_from_v2_cfg(v2_cfg: dict[str, Any]) -> dict[str, Any]:
+def _pair_cfg_from_predictor_cfg(predictor_cfg: dict[str, Any]) -> dict[str, Any]:
     return {
-        "enable": bool(v2_cfg["enable"]),
-        "early_end_ratio": float(v2_cfg["early_end_ratio"]),
-        "late_start_ratio": float(v2_cfg["late_start_ratio"]),
-        "stride": int(v2_cfg["subsample_stride"]),
-        "ratio_ema": float(v2_cfg["qc_ratio_ema_decay"]),
-        "dir_ema": float(v2_cfg["qc_dir_ema_decay"]),
-        "beta_mid": float(v2_cfg["beta_mid"]),
-        "beta_late": float(v2_cfg["beta_late"]),
-        "ratio_tol_mid": float(v2_cfg["ratio_tol_mid"]),
-        "ratio_tol_late": float(v2_cfg["ratio_tol_late"]),
-        "dir_min_mid": float(v2_cfg["dir_min_mid"]),
-        "dir_min_late": float(v2_cfg["dir_min_late"]),
-        "second_order": bool(v2_cfg["use_second_order"]),
-        "online_scale": bool(v2_cfg["use_online_scale"]),
-        "scale_ema": float(v2_cfg["scale_ema_decay"]),
-        "scale_low": float(v2_cfg["scale_clamp_low"]),
-        "scale_high": float(v2_cfg["scale_clamp_high"]),
-        "anchor_enable": bool(v2_cfg["b2_enable"]),
-        "anchor_exact_early": bool(v2_cfg["b2_exact_early"]),
-        "anchor_age_mid": int(v2_cfg["b2_max_pred_age_mid"]),
-        "anchor_age_late": int(v2_cfg["b2_max_pred_age_late"]),
-        "anchor_cond_cap_mid": float(v2_cfg["b2_cond_rel_cap_mid"]),
-        "anchor_cond_cap_late": float(v2_cfg["b2_cond_rel_cap_late"]),
-        "anchor_alpha_early": float(v2_cfg["b2_alpha_prior_early"]),
-        "anchor_alpha_mid": float(v2_cfg["b2_alpha_prior_mid"]),
-        "anchor_alpha_late": float(v2_cfg["b2_alpha_prior_late"]),
-        "anchor_alpha_ema": float(v2_cfg["b2_alpha_ema_decay"]),
-        "anchor_blend_mid": float(v2_cfg["b2_blend_mid"]),
-        "anchor_blend_late": float(v2_cfg["b2_blend_late"]),
-        "anchor_diff_cap_mid": float(v2_cfg["b2_disagree_rel_cap_mid"]),
-        "anchor_diff_cap_late": float(v2_cfg["b2_disagree_rel_cap_late"]),
+        "enable": bool(predictor_cfg["enable"]),
+        "early_end_ratio": float(predictor_cfg["early_end_ratio"]),
+        "late_start_ratio": float(predictor_cfg["late_start_ratio"]),
+        "stride": int(predictor_cfg["subsample_stride"]),
+        "ratio_ema": float(predictor_cfg["qc_ratio_ema_decay"]),
+        "dir_ema": float(predictor_cfg["qc_dir_ema_decay"]),
+        "beta_mid": float(predictor_cfg["beta_mid"]),
+        "beta_late": float(predictor_cfg["beta_late"]),
+        "ratio_tol_mid": float(predictor_cfg["ratio_tol_mid"]),
+        "ratio_tol_late": float(predictor_cfg["ratio_tol_late"]),
+        "dir_min_mid": float(predictor_cfg["dir_min_mid"]),
+        "dir_min_late": float(predictor_cfg["dir_min_late"]),
+        "second_order": bool(predictor_cfg["use_second_order"]),
+        "online_scale": bool(predictor_cfg["use_online_scale"]),
+        "scale_ema": float(predictor_cfg["scale_ema_decay"]),
+        "scale_low": float(predictor_cfg["scale_clamp_low"]),
+        "scale_high": float(predictor_cfg["scale_clamp_high"]),
+        "anchor_enable": bool(predictor_cfg["anchor_enable"]),
+        "anchor_exact_early": bool(predictor_cfg["anchor_exact_early"]),
+        "anchor_age_mid": int(predictor_cfg["anchor_age_mid"]),
+        "anchor_age_late": int(predictor_cfg["anchor_age_late"]),
+        "anchor_cond_cap_mid": float(predictor_cfg["anchor_cond_cap_mid"]),
+        "anchor_cond_cap_late": float(predictor_cfg["anchor_cond_cap_late"]),
+        "anchor_alpha_early": float(predictor_cfg["anchor_alpha_early"]),
+        "anchor_alpha_mid": float(predictor_cfg["anchor_alpha_mid"]),
+        "anchor_alpha_late": float(predictor_cfg["anchor_alpha_late"]),
+        "anchor_alpha_ema": float(predictor_cfg["anchor_alpha_ema"]),
+        "anchor_blend_mid": float(predictor_cfg["anchor_blend_mid"]),
+        "anchor_blend_late": float(predictor_cfg["anchor_blend_late"]),
+        "anchor_diff_cap_mid": float(predictor_cfg["anchor_diff_cap_mid"]),
+        "anchor_diff_cap_late": float(predictor_cfg["anchor_diff_cap_late"]),
     }
 
 
@@ -1014,7 +1014,7 @@ def _resolve_aligncache_config(
     default_scale_init: dict[str, float] | None = None,
     default_scale_low: dict[str, float] | None = None,
     default_scale_high: dict[str, float] | None = None,
-    default_v2_cfg_overrides: dict[str, Any] | None = None,
+    default_predictor_cfg_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw = _normalize_aligncache_method_config(method_config)
     base_thresh = _resolved_base_thresh(raw, label_prefix=label_prefix, default_thresh=default_thresh)
@@ -1135,14 +1135,14 @@ def _resolve_aligncache_config(
         raw.get("phase_scale_profile", raw.get("base_phase_scale_profile")),
         label=f"{label_prefix}.phase_scale_profile",
     )
-    v2_input = raw.get("v2_cfg") or raw.get("pair_cfg") or raw.get("predictor") or raw
-    if default_v2_cfg_overrides:
-        merged_v2_input = dict(default_v2_cfg_overrides)
-        if isinstance(v2_input, dict):
-            merged_v2_input.update(v2_input)
-        v2_input = merged_v2_input
-    v2_cfg = _coerce_aligncache_v2_cfg_input(v2_input)
-    pair_cfg = _pair_cfg_from_v2_cfg(v2_cfg)
+    predictor_input = raw.get("predictor_cfg") or raw.get("pair_cfg") or raw.get("predictor") or raw
+    if default_predictor_cfg_overrides:
+        merged_predictor_input = dict(default_predictor_cfg_overrides)
+        if isinstance(predictor_input, dict):
+            merged_predictor_input.update(predictor_input)
+        predictor_input = merged_predictor_input
+    predictor_cfg = _coerce_aligncache_predictor_cfg_input(predictor_input)
+    pair_cfg = _pair_cfg_from_predictor_cfg(predictor_cfg)
     resolved = {
         "method": "aligncache",
         "scheduler": "aligncache-base-plus-fb",
@@ -1172,11 +1172,11 @@ def _resolve_aligncache_config(
         "ratio_clip_low": float(feedback_ratio_clip_low),
         "ratio_clip_high": float(feedback_ratio_clip_high),
         "score_eps": 1e-6,
-        "v2_cfg": dict(v2_cfg),
+        "predictor_cfg": dict(predictor_cfg),
         "pair_cfg": {
             "pair_enable": bool(pair_cfg["enable"]),
             "enable": bool(pair_cfg["enable"]),
-            "pair_aggr": float(v2_cfg["aggressiveness"]),
+            "pair_aggr": float(predictor_cfg["aggressiveness"]),
             "pair_second_order": bool(pair_cfg["second_order"]),
             "pair_online_scale": bool(pair_cfg["online_scale"]),
             "pair_stride": int(pair_cfg["stride"]),
@@ -1208,7 +1208,7 @@ def _resolve_aligncache_config(
             "anchor_diff_cap_mid": float(pair_cfg["anchor_diff_cap_mid"]),
             "anchor_diff_cap_late": float(pair_cfg["anchor_diff_cap_late"]),
         },
-        "predictor": dict(v2_cfg),
+        "predictor": dict(predictor_cfg),
     }
     return resolved
 
@@ -1254,7 +1254,7 @@ def resolve_hunyuan_aligncache_config(
         default_scale_init=_HUNYUAN_ALIGNCACHE_SCALE_INIT,
         default_scale_low=_HUNYUAN_ALIGNCACHE_SCALE_LOW,
         default_scale_high=_HUNYUAN_ALIGNCACHE_SCALE_HIGH,
-        default_v2_cfg_overrides=_HUNYUAN_ALIGNCACHE_V2_DEFAULTS,
+        default_predictor_cfg_overrides=_HUNYUAN_ALIGNCACHE_PREDICTOR_DEFAULTS,
     )
     raw = _normalize_aligncache_method_config(method_config)
     force_cfg_pair = _coerce_optional_bool(
@@ -1491,12 +1491,12 @@ def _record_anchor_event(runtime: Any, key: str, *, enabled: bool = True) -> Non
         counts[key] += 1
 
 
-def _clear_v2_pending_cond_state(runtime: Any) -> None:
+def _clear_pair_pending_cond_state(runtime: Any) -> None:
     runtime.pending_cond = None
     runtime.pending_cond_exact = False
 
 
-def _set_v2_pending_cond_state(runtime: Any, output: Sequence[torch.Tensor], exact_pair: bool) -> None:
+def _set_pair_pending_cond_state(runtime: Any, output: Sequence[torch.Tensor], exact_pair: bool) -> None:
     runtime.pending_cond = _clone_tensor_list(output)
     runtime.pending_cond_exact = bool(exact_pair)
 
@@ -1875,7 +1875,7 @@ def _guided_output(
     ]
 
 
-def _init_aligncache_fb2_state(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+def _init_aligncache_feedback_state(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     config = dict(cfg or {})
     scale_init = _resolve_phase_mapping(_ALIGNCACHE_DEFAULT_SCALE_INIT, config.get("scale_init"), float)
     ratio_ema = {phase: 1.0 / max(float(scale_init[phase]), 1e-6) for phase in _PHASES}
@@ -1906,7 +1906,7 @@ def _init_aligncache_fb2_state(cfg: dict[str, Any] | None = None) -> dict[str, A
     }
 
 
-def _reset_aligncache_fb2_pending_feedback(state: dict[str, Any]) -> None:
+def _reset_aligncache_pending_feedback(state: dict[str, Any]) -> None:
     state["pending_phase"] = None
     state["pending_budget"] = None
     state["pending_feedback_eligible"] = False
@@ -2026,7 +2026,7 @@ def _fb_update_from_exact_feedback(
     guide_scale: float,
 ) -> None:
     if not bool(state.get("pending_feedback_eligible")):
-        _reset_aligncache_fb2_pending_feedback(state)
+        _reset_aligncache_pending_feedback(state)
         return
     phase = state.get("pending_phase")
     budget = state.get("pending_budget")
@@ -2041,14 +2041,14 @@ def _fb_update_from_exact_feedback(
         or uncond_output is None
     ):
         state["summary"]["feedback_skipped_pairs"] += 1
-        _reset_aligncache_fb2_pending_feedback(state)
+        _reset_aligncache_pending_feedback(state)
         return
     guided_draft = _guided_output(cond_draft, uncond_draft, guide_scale)
     guided_exact = _guided_output(cond_output, uncond_output, guide_scale)
     obs_err = _tensor_list_rel_mse(guided_draft, guided_exact)
     if obs_err is None:
         state["summary"]["feedback_skipped_pairs"] += 1
-        _reset_aligncache_fb2_pending_feedback(state)
+        _reset_aligncache_pending_feedback(state)
         return
     err_ratio = float(obs_err) / max(float(budget), float(cfg["score_eps"]))
     clipped_ratio = _clamp_float(err_ratio, float(cfg["ratio_clip_low"]), float(cfg["ratio_clip_high"]))
@@ -2061,7 +2061,7 @@ def _fb_update_from_exact_feedback(
         float(cfg["scale_high"][phase]),
     )
     state["summary"]["feedback_updates"] += 1
-    _reset_aligncache_fb2_pending_feedback(state)
+    _reset_aligncache_pending_feedback(state)
 
 
 def _init_pair_predictor_state(cfg: dict[str, Any], *, guide_scale: float) -> Any:
@@ -2172,11 +2172,11 @@ def _normalize_opensora_pair_output_for_cache(
 
 def reset_single_aligncache_state(module: Any, *, sample_steps: int) -> None:
     cfg = dict(getattr(module, "aligncache_cfg", {}) or {})
-    pair_cfg = _pair_cfg_from_v2_cfg(dict(cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS))
+    pair_cfg = _pair_cfg_from_predictor_cfg(dict(cfg.get("predictor_cfg") or _ALIGNCACHE_PREDICTOR_DEFAULTS))
     guide_scale = float(getattr(module, "sample_guide_scale", cfg.get("guide_scale") or 1.0))
     runtime = _init_pair_predictor_state(pair_cfg, guide_scale=guide_scale)
     runtime.fb_cfg = cfg
-    runtime.fb_state = _init_aligncache_fb2_state(cfg)
+    runtime.fb_state = _init_aligncache_feedback_state(cfg)
     runtime.anchor_state = _init_anchor_state(pair_cfg)
     module.aligncache_state = runtime.fb_state
     module.aligncache_pair_state = runtime
@@ -2187,7 +2187,7 @@ def reset_single_aligncache_state(module: Any, *, sample_steps: int) -> None:
     module.accumulated_error = 0.0
     module.cnt = 0
     module.num_steps = max(int(sample_steps), 1)
-    module.v2_current_phase_threshold = float(cfg.get("base_thresh", 0.0) or 0.0)
+    module.aligncache_current_phase_threshold = float(cfg.get("base_thresh", 0.0) or 0.0)
 
 
 def prepare_single_aligncache_step(
@@ -2226,13 +2226,13 @@ def prepare_single_aligncache_step(
 
     step_idx = int(getattr(module, "cnt", 0))
     total_steps = max(int(getattr(module, "num_steps", 1) or 1), 1)
-    pair_cfg = _pair_cfg_from_v2_cfg(dict(cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS))
+    pair_cfg = _pair_cfg_from_predictor_cfg(dict(cfg.get("predictor_cfg") or _ALIGNCACHE_PREDICTOR_DEFAULTS))
     phase = _get_phase(step_idx, total_steps, pair_cfg)
     base_phase_threshold = float(cfg["phase_thresholds"][phase])
     threshold_scale = float(state["scale"][phase])
     phase_threshold = float(base_phase_threshold) * float(threshold_scale)
     current_ratio_ema = float(state["ratio_ema"][phase])
-    module.v2_current_phase_threshold = float(base_phase_threshold)
+    module.aligncache_current_phase_threshold = float(base_phase_threshold)
 
     cond_raw_tensor = branches["cond"]
     uncond_raw_tensor = branches["uncond"]
@@ -2330,7 +2330,7 @@ def prepare_single_aligncache_step(
     anchor_output = _predict_anchor_uncond(runtime, phase, step_idx, cond_output, uncond_output)
     if anchor_output is not None:
         uncond_output = anchor_output
-    _set_v2_pending_cond_state(runtime, cond_output, False)
+    _set_pair_pending_cond_state(runtime, cond_output, False)
     predicted_output = _merge_cfg_batch(
         {
             "cond": _compose_opensora_pred_sigma_output(cond_output, runtime.aux_output.get("cond")),
@@ -2339,7 +2339,7 @@ def prepare_single_aligncache_step(
         branch_order,
     )
     if predicted_output is None:
-        _clear_v2_pending_cond_state(runtime)
+        _clear_pair_pending_cond_state(runtime)
         return {
             "kind": "pair",
             "phase": phase,
@@ -2395,8 +2395,8 @@ def complete_single_aligncache_skip(
     runtime.uncond_cache = [(u - v).detach() for u, v in zip(uncond_output, uncond_raw)]
     _write_pair_branch_result(runtime, cond_raw, cond_output, True, str(decision["phase"]), False)
     _write_pair_branch_result(runtime, uncond_raw, uncond_output, False, str(decision["phase"]), False)
-    _clear_v2_pending_cond_state(runtime)
-    _reset_aligncache_fb2_pending_feedback(getattr(module, "aligncache_state"))
+    _clear_pair_pending_cond_state(runtime)
+    _reset_aligncache_pending_feedback(getattr(module, "aligncache_state"))
     _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "skip_pair")
     _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
     return [predicted_output] if isinstance(predicted_output, torch.Tensor) else list(predicted_output)
@@ -2465,7 +2465,7 @@ def complete_single_aligncache_exact(
         uncond_output,
         runtime.sample_guide_scale,
     )
-    _clear_v2_pending_cond_state(runtime)
+    _clear_pair_pending_cond_state(runtime)
     _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "exact_pair")
     _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
     return [exact_output] if isinstance(exact_output, torch.Tensor) else list(exact_output)
@@ -2498,13 +2498,13 @@ def _prepare_hunyuan_aligncache_single_step(
 
     step_idx = int(getattr(module, "cnt", 0))
     total_steps = max(int(getattr(module, "num_steps", 1) or 1), 1)
-    pair_cfg = _pair_cfg_from_v2_cfg(dict(cfg.get("v2_cfg") or _ALIGNCACHE_V2_DEFAULTS))
+    pair_cfg = _pair_cfg_from_predictor_cfg(dict(cfg.get("predictor_cfg") or _ALIGNCACHE_PREDICTOR_DEFAULTS))
     phase = _get_phase(step_idx, total_steps, pair_cfg)
     base_phase_threshold = float(cfg["phase_thresholds"][phase])
     threshold_scale = float(state["scale"][phase])
     phase_threshold = float(base_phase_threshold) * float(threshold_scale)
     current_ratio_ema = float(state["ratio_ema"][phase])
-    module.v2_current_phase_threshold = float(base_phase_threshold)
+    module.aligncache_current_phase_threshold = float(base_phase_threshold)
 
     budget_next = None
     pred_change_base = None
@@ -2611,7 +2611,7 @@ def _complete_hunyuan_aligncache_single_skip(
     predicted_output: torch.Tensor,
     decision: dict[str, Any],
 ) -> list[torch.Tensor]:
-    _reset_aligncache_fb2_pending_feedback(getattr(module, "aligncache_state"))
+    _reset_aligncache_pending_feedback(getattr(module, "aligncache_state"))
     _fb_complete_pair(getattr(module, "aligncache_state"), int(decision["step_idx"]), "skip_pair")
     module.aligncache_predicted_output = None
     _advance_aligncache_counter(module, step_limit=max(int(getattr(module, "num_steps", 1) or 1), 1))
@@ -2792,16 +2792,16 @@ def _reset_wan_pair_state(model: Any) -> None:
     model.phase_base_thresh = None
     _reset_shadow_pair_state(model)
     model.anchor_state = _init_anchor_state(model.pair_cfg)
-    _clear_v2_pending_cond_state(model)
-    model.fb_state = _init_aligncache_fb2_state(model.fb_cfg)
+    _clear_pair_pending_cond_state(model)
+    model.fb_state = _init_aligncache_feedback_state(model.fb_cfg)
 
 
 def _advance_wan_counter(model: Any) -> None:
     model.call_idx += 1
     if model.call_idx >= model.total_calls:
         model.call_idx = 0
-        _clear_v2_pending_cond_state(model)
-        model.fb_state = _init_aligncache_fb2_state(model.fb_cfg)
+        _clear_pair_pending_cond_state(model)
+        model.fb_state = _init_aligncache_feedback_state(model.fb_cfg)
 
 
 def configure_wan_aligncache(
@@ -2844,7 +2844,7 @@ def configure_wan_aligncache(
     model.phase_skip_thresholds = dict(resolved["phase_thresholds"])
     model.sample_guide_scale = float(resolved_guide_scale)
     model.fb_cfg = dict(resolved)
-    model.pair_cfg = _pair_cfg_from_v2_cfg(dict(resolved["v2_cfg"]))
+    model.pair_cfg = _pair_cfg_from_predictor_cfg(dict(resolved["predictor_cfg"]))
     _reset_wan_pair_state(model)
     if not enabled:
         return None
@@ -2863,7 +2863,7 @@ def restore_wan_aligncache_state(pipeline: Any) -> None:
     model.tail_call_start = max(model.total_calls - 2, 0)
     model.base_thresh = 0.0
     model.phase_skip_thresholds = {phase: 0.0 for phase in _PHASES}
-    model.pair_cfg = _pair_cfg_from_v2_cfg(dict(_ALIGNCACHE_V2_DEFAULTS))
+    model.pair_cfg = _pair_cfg_from_predictor_cfg(dict(_ALIGNCACHE_PREDICTOR_DEFAULTS))
     model.fb_cfg = {
         "score_eps": 1e-6,
         "ratio_ema_decay": 0.90,
@@ -2970,7 +2970,7 @@ def _wan_aligncache_forward(
         pred_output = _predict_pair_output(self, raw_input, phase, True)
         if pred_output is None:
             pred_output = [(value + delta).detach() for value, delta in zip(raw_input, self.cond_cache)]
-        _set_v2_pending_cond_state(self, pred_output, False)
+        _set_pair_pending_cond_state(self, pred_output, False)
         _write_pair_branch_result(self, raw_input, pred_output, True, phase, False)
         _advance_wan_counter(self)
         return [value.float() for value in pred_output]
@@ -2984,9 +2984,9 @@ def _wan_aligncache_forward(
         if anchor_output is not None:
             pred_output = anchor_output
         _write_pair_branch_result(self, raw_input, pred_output, False, phase, False)
-        _clear_v2_pending_cond_state(self)
+        _clear_pair_pending_cond_state(self)
         _fb_complete_pair(state, pair_idx, "skip_pair")
-        _reset_aligncache_fb2_pending_feedback(state)
+        _reset_aligncache_pending_feedback(state)
         _advance_wan_counter(self)
         return [value.float() for value in pred_output]
 
@@ -3047,14 +3047,14 @@ def _wan_aligncache_forward(
         self.prev_cond_input = getattr(self, "last_cond_input", None)
         self.last_cond_output = _clone_tensor_list(output)
         self.cond_cache = [current.detach() - previous.detach() for current, previous in zip(output, raw_input)]
-        _set_v2_pending_cond_state(self, output, True)
+        _set_pair_pending_cond_state(self, output, True)
         _write_pair_branch_result(self, raw_input, output, True, phase, True)
     else:
         self.uncond_cache = [current.detach() - previous.detach() for current, previous in zip(output, raw_input)]
         _write_pair_branch_result(self, raw_input, output, False, phase, True)
         _update_anchor_state(self, phase, pair_idx, getattr(self, "pending_cond", None), output, getattr(self, "pending_cond_exact", False))
         _fb_update_from_exact_feedback(state, self.fb_cfg, getattr(self, "pending_cond", None), output, self.sample_guide_scale)
-        _clear_v2_pending_cond_state(self)
+        _clear_pair_pending_cond_state(self)
         _fb_complete_pair(state, pair_idx, "exact_pair")
 
     _advance_wan_counter(self)
@@ -3255,21 +3255,21 @@ def _parse_args():
     parser.add_argument("--phase_scale_early", type=float, default=FB_DEFAULT_PHASE_SCALES["early"], help="Early-phase threshold scale.")
     parser.add_argument("--phase_scale_mid", type=float, default=FB_DEFAULT_PHASE_SCALES["mid"], help="Mid-phase threshold scale.")
     parser.add_argument("--phase_scale_late", type=float, default=FB_DEFAULT_PHASE_SCALES["late"], help="Late-phase threshold scale.")
-    parser.add_argument("--fb_ratio_ema_decay", "--fb2_ratio_ema_decay", dest="fb_ratio_ema_decay", type=float, default=FB_DEFAULTS["ratio_ema_decay"])
-    parser.add_argument("--fb_ratio_clip_low", "--fb2_ratio_clip_low", dest="fb_ratio_clip_low", type=float, default=FB_DEFAULTS["ratio_clip_low"])
-    parser.add_argument("--fb_ratio_clip_high", "--fb2_ratio_clip_high", dest="fb_ratio_clip_high", type=float, default=FB_DEFAULTS["ratio_clip_high"])
-    parser.add_argument("--fb_age_cap_early", "--fb2_age_cap_early", dest="fb_age_cap_early", type=int, default=FB_DEFAULT_AGE_CAP["early"])
-    parser.add_argument("--fb_age_cap_mid", "--fb2_age_cap_mid", dest="fb_age_cap_mid", type=int, default=FB_DEFAULT_AGE_CAP["mid"])
-    parser.add_argument("--fb_age_cap_late", "--fb2_age_cap_late", dest="fb_age_cap_late", type=int, default=FB_DEFAULT_AGE_CAP["late"])
-    parser.add_argument("--fb_scale_init_early", "--fb2_scale_init_early", dest="fb_scale_init_early", type=float, default=FB_DEFAULT_SCALE_INIT["early"])
-    parser.add_argument("--fb_scale_init_mid", "--fb2_scale_init_mid", dest="fb_scale_init_mid", type=float, default=FB_DEFAULT_SCALE_INIT["mid"])
-    parser.add_argument("--fb_scale_init_late", "--fb2_scale_init_late", dest="fb_scale_init_late", type=float, default=FB_DEFAULT_SCALE_INIT["late"])
-    parser.add_argument("--fb_scale_low_early", "--fb2_scale_low_early", dest="fb_scale_low_early", type=float, default=FB_DEFAULT_SCALE_LOW["early"])
-    parser.add_argument("--fb_scale_low_mid", "--fb2_scale_low_mid", dest="fb_scale_low_mid", type=float, default=FB_DEFAULT_SCALE_LOW["mid"])
-    parser.add_argument("--fb_scale_low_late", "--fb2_scale_low_late", dest="fb_scale_low_late", type=float, default=FB_DEFAULT_SCALE_LOW["late"])
-    parser.add_argument("--fb_scale_high_early", "--fb2_scale_high_early", dest="fb_scale_high_early", type=float, default=FB_DEFAULT_SCALE_HIGH["early"])
-    parser.add_argument("--fb_scale_high_mid", "--fb2_scale_high_mid", dest="fb_scale_high_mid", type=float, default=FB_DEFAULT_SCALE_HIGH["mid"])
-    parser.add_argument("--fb_scale_high_late", "--fb2_scale_high_late", dest="fb_scale_high_late", type=float, default=FB_DEFAULT_SCALE_HIGH["late"])
+    parser.add_argument("--fb_ratio_ema_decay", dest="fb_ratio_ema_decay", type=float, default=FB_DEFAULTS["ratio_ema_decay"])
+    parser.add_argument("--fb_ratio_clip_low", dest="fb_ratio_clip_low", type=float, default=FB_DEFAULTS["ratio_clip_low"])
+    parser.add_argument("--fb_ratio_clip_high", dest="fb_ratio_clip_high", type=float, default=FB_DEFAULTS["ratio_clip_high"])
+    parser.add_argument("--fb_age_cap_early", dest="fb_age_cap_early", type=int, default=FB_DEFAULT_AGE_CAP["early"])
+    parser.add_argument("--fb_age_cap_mid", dest="fb_age_cap_mid", type=int, default=FB_DEFAULT_AGE_CAP["mid"])
+    parser.add_argument("--fb_age_cap_late", dest="fb_age_cap_late", type=int, default=FB_DEFAULT_AGE_CAP["late"])
+    parser.add_argument("--fb_scale_init_early", dest="fb_scale_init_early", type=float, default=FB_DEFAULT_SCALE_INIT["early"])
+    parser.add_argument("--fb_scale_init_mid", dest="fb_scale_init_mid", type=float, default=FB_DEFAULT_SCALE_INIT["mid"])
+    parser.add_argument("--fb_scale_init_late", dest="fb_scale_init_late", type=float, default=FB_DEFAULT_SCALE_INIT["late"])
+    parser.add_argument("--fb_scale_low_early", dest="fb_scale_low_early", type=float, default=FB_DEFAULT_SCALE_LOW["early"])
+    parser.add_argument("--fb_scale_low_mid", dest="fb_scale_low_mid", type=float, default=FB_DEFAULT_SCALE_LOW["mid"])
+    parser.add_argument("--fb_scale_low_late", dest="fb_scale_low_late", type=float, default=FB_DEFAULT_SCALE_LOW["late"])
+    parser.add_argument("--fb_scale_high_early", dest="fb_scale_high_early", type=float, default=FB_DEFAULT_SCALE_HIGH["early"])
+    parser.add_argument("--fb_scale_high_mid", dest="fb_scale_high_mid", type=float, default=FB_DEFAULT_SCALE_HIGH["mid"])
+    parser.add_argument("--fb_scale_high_late", dest="fb_scale_high_late", type=float, default=FB_DEFAULT_SCALE_HIGH["late"])
     parser.add_argument("--alpha", default=0.0, type=float)
     parser.add_argument("--beta", default=1.0, type=float)
     parser.add_argument("--start_idx", type=int, default=0)

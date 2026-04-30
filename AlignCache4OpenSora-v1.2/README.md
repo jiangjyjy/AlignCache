@@ -91,7 +91,7 @@ Common controls:
 - `--fb_ratio_clip_low`
 - `--fb_ratio_clip_high`
 
-V2 pair controls:
+Pair predictor controls:
 
 - `--pair_enable`
 - `--pair_aggr`
@@ -110,7 +110,7 @@ V2 pair controls:
 - `--pair_scale_low`
 - `--pair_scale_high`
 
-B2 anchor controls:
+Anchor controls:
 
 - `--anchor_enable`
 - `--anchor_exact_early`
