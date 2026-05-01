@@ -41,7 +41,7 @@ The scripts accept a small set of extra AlignCache controls before the normal Hu
 - `--pair_stride`
 - `--anchor_enable`
 
-This `aligncache` script is the feedback-enabled AlignCache variant, renamed to `aligncache` for the repository interface. It also accepts:
+This `aligncache` script is the feedback-enabled AlignCache variant, renamed to `aligncache` for the script interface. It also accepts:
 
 - `--fb_ratio_ema_decay`
 - `--fb_ratio_clip_low`

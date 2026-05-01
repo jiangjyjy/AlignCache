@@ -21,7 +21,6 @@ EasyCache-style AlignCache runners:
 ### `AlignCache4OpenSora-v1.2`
 
 - `aligncache_inference.py`
-- `opensora/`
 - `configs/opensora-v1-2/inference/sample.py`
 - `README.md`
 
@@ -30,8 +29,10 @@ EasyCache-style AlignCache runners:
 Model weights are not included. See each model directory README for the expected
 checkpoint layout and environment variables.
 
-`AlignCache4OpenSora-v1.2` includes its own `opensora/` package and config file,
-so it does not require an external OpenSora checkout.
+`AlignCache4OpenSora-v1.2` intentionally does not include the upstream
+`opensora/` package. Install or add an external OpenSora v1.2 checkout to
+`PYTHONPATH`; see `AlignCache4OpenSora-v1.2/README.md` for the exact setup and
+local-checkpoint source patch notes.
 
 ## Implementation note
 
