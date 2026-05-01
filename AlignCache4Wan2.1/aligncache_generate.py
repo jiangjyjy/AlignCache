@@ -1223,7 +1223,7 @@ def resolve_wan_aligncache_config(
     if resolved_task not in _WAN_SUPPORTED_TASKS:
         supported = ", ".join(sorted(_WAN_SUPPORTED_TASKS))
         raise ValueError(
-            "AlignCache for Wan currently supports the vendored T2V tasks only. "
+            "AlignCache for Wan currently supports the listed T2V tasks only. "
             f"Received task={resolved_task!r}. Supported tasks: {supported}"
         )
     return _resolve_aligncache_config(
@@ -2726,9 +2726,9 @@ def configure_hunyuan_aligncache(
 
     pipeline = sampler.pipeline
     transformer = pipeline.transformer
-    if not getattr(transformer, "_vbench_teacache_patch_applied", False):
+    if not getattr(transformer, "_aligncache_teacache_patch_applied", False):
         transformer.forward = types.MethodType(teacache._hunyuan_teacache_forward, transformer)
-        transformer._vbench_teacache_patch_applied = True
+        transformer._aligncache_teacache_patch_applied = True
 
     enabled = str(method_name) == "aligncache"
     transformer.enable_aligncache = bool(enabled)
@@ -2741,7 +2741,7 @@ def configure_hunyuan_aligncache(
         )
     else:
         transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
-    pipeline._vbench_force_cfg_pair = bool(enabled and transformer.aligncache_cfg.get("force_cfg_pair", True))
+    pipeline._aligncache_force_cfg_pair = bool(enabled and transformer.aligncache_cfg.get("force_cfg_pair", True))
     transformer.aligncache_branch_order = ("uncond", "cond")
     _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
     if not enabled:
@@ -2754,7 +2754,7 @@ def restore_hunyuan_aligncache_state(sampler: Any, *, sample_steps: int) -> None
     transformer = pipeline.transformer
     transformer.enable_aligncache = False
     transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
-    pipeline._vbench_force_cfg_pair = False
+    pipeline._aligncache_force_cfg_pair = False
     transformer.aligncache_branch_order = ("uncond", "cond")
     _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
 
@@ -2813,13 +2813,13 @@ def configure_wan_aligncache(
     sample_steps: int,
 ) -> dict[str, Any] | None:
     model = pipeline.model
-    if not hasattr(model, "_vbench_aligncache_original_forward"):
-        model._vbench_aligncache_original_forward = model.forward
+    if not hasattr(model, "_aligncache_aligncache_original_forward"):
+        model._aligncache_aligncache_original_forward = model.forward
     enabled = str(method_name) == "aligncache"
     if enabled:
         model.forward = types.MethodType(_wan_aligncache_forward, model)
     else:
-        original_forward = getattr(model, "_vbench_aligncache_original_forward", None)
+        original_forward = getattr(model, "_aligncache_aligncache_original_forward", None)
         if original_forward is not None:
             model.forward = original_forward
     model.enable_aligncache = bool(enabled)
@@ -2853,7 +2853,7 @@ def configure_wan_aligncache(
 
 def restore_wan_aligncache_state(pipeline: Any) -> None:
     model = pipeline.model
-    original_forward = getattr(model, "_vbench_aligncache_original_forward", None)
+    original_forward = getattr(model, "_aligncache_aligncache_original_forward", None)
     if original_forward is not None:
         model.forward = original_forward
     model.enable_aligncache = False

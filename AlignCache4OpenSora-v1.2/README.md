@@ -1,13 +1,35 @@
 # AlignCache for OpenSora v1.2
 
-This directory contains a self-contained OpenSora v1.2 AlignCache runner:
+This directory contains the OpenSora v1.2 AlignCache runner without vendoring
+the upstream OpenSora source tree:
 
 - `aligncache_inference.py`
-- `opensora/`
 - `configs/opensora-v1-2/inference/sample.py`
 
-The script prioritizes the vendored `opensora/` package next to it, so it does
-not require any external OpenSora package checkout.
+For anonymous review, the upstream `opensora/` package is intentionally not
+included in this repository. Use an external OpenSora v1.2 checkout or
+installation instead.
+
+## OpenSora v1.2 dependency
+
+Clone or install OpenSora v1.2 outside this anonymized repository:
+
+```bash
+git clone https://github.com/hpcaitech/Open-Sora.git
+cd Open-Sora
+git checkout v1.2.0
+pip install -e .
+```
+
+If you do not install it as a package, put the external checkout on
+`PYTHONPATH` before running this script:
+
+```bash
+export PYTHONPATH=/path/to/Open-Sora:$PYTHONPATH
+```
+
+Do not copy the upstream `opensora/` directory into this repository for an
+anonymous submission.
 
 ## Checkpoints
 
@@ -54,6 +76,32 @@ export HF_HUB_OFFLINE=1
 export TRANSFORMERS_OFFLINE=1
 ```
 
+## OpenSora source changes for local checkpoints
+
+Stock OpenSora v1.2 works when the model sources are loaded from Hugging Face
+repo IDs or from OpenSora sharded checkpoint directories. If you must run fully
+offline from local Hugging Face snapshot directories, apply the following
+changes in the external OpenSora v1.2 checkout, not in this repository:
+
+1. In `opensora/models/text_encoder/t5.py`, allow local T5 directories by
+   treating an existing filesystem path as a valid `from_pretrained` source
+   before the `assert from_pretrained in self.available_models` check.
+2. In `opensora/models/vae/vae.py`, resolve the 2D PixArt VAE source from
+   `ALIGNCACHE_OPENSORA_PIXART_VAE_PATH` first, then from
+   `$ALIGNCACHE_CHECKPOINTS_DIR/pixart_sigma_sdxlvae_T5_diffusers`, and fall
+   back to `PixArt-alpha/pixart_sigma_sdxlvae_T5_diffusers`.
+3. In `opensora/models/stdit/stdit3.py` and `opensora/models/vae/vae.py`,
+   distinguish local Hugging Face snapshot directories from OpenSora sharded
+   checkpoint directories. Directories with `config.json` or
+   `model_index.json` plus standard weight files such as `model.safetensors`
+   should be loaded with `.from_pretrained(path)`. Plain `.pt`/`.pth` files and
+   sharded checkpoint directories should continue to use `load_checkpoint`.
+4. If you run OpenSora's original inference entrypoint with this config, update
+   `opensora/utils/config_utils.py` so `read_config()` calls
+   `Config.fromfile(config_path, lazy_import=False)`. This runner already loads
+   configs eagerly, so this step is only needed for the original OpenSora
+   scripts.
+
 ## Usage
 
 Run the script from the repository root or by absolute path:
@@ -76,9 +124,6 @@ python AlignCache4OpenSora-v1.2/aligncache_inference.py \
   --save-dir ./samples \
   --prompt "A cinematic drone shot of waves crashing against black volcanic rocks."
 ```
-
-Older checkpoint environment variable names are still accepted for
-compatibility, but they are not required.
 
 ## Optional AlignCache arguments
 
