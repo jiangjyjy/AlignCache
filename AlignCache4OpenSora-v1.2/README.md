@@ -15,7 +15,7 @@ installation instead.
 Clone or install OpenSora v1.2 outside this anonymized repository:
 
 ```bash
-git clone https://github.com/hpcaitech/Open-Sora.git
+git clone https://github.com/XXX/Open-Sora.git
 cd Open-Sora
 git checkout v1.2.0
 pip install -e .
