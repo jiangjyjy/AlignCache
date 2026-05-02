@@ -2033,14 +2033,14 @@ def configure_hunyuan_aligncache(
     pipeline = sampler.pipeline
     if not getattr(pipeline.__class__, "_aligncache_force_cfg_pair_patch_applied", False):
         def _aligncache_do_classifier_free_guidance(self):
-            return self._guidance_scale > 1 or bool(getattr(self, "_vbench_force_cfg_pair", False))
+            return self._guidance_scale > 1 or bool(getattr(self, "_aligncache_force_cfg_pair", False))
 
         pipeline.__class__.do_classifier_free_guidance = property(_aligncache_do_classifier_free_guidance)
         pipeline.__class__._aligncache_force_cfg_pair_patch_applied = True
     transformer = pipeline.transformer
-    if not getattr(transformer, "_vbench_teacache_patch_applied", False):
+    if not getattr(transformer, "_aligncache_teacache_patch_applied", False):
         transformer.forward = types.MethodType(_hunyuan_teacache_forward, transformer)
-        transformer._vbench_teacache_patch_applied = True
+        transformer._aligncache_teacache_patch_applied = True
 
     enabled = str(method_name) == "aligncache"
     transformer.enable_aligncache = bool(enabled)
@@ -2053,7 +2053,7 @@ def configure_hunyuan_aligncache(
         )
     else:
         transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
-    pipeline._vbench_force_cfg_pair = bool(enabled and transformer.aligncache_cfg.get("force_cfg_pair", True))
+    pipeline._aligncache_force_cfg_pair = bool(enabled and transformer.aligncache_cfg.get("force_cfg_pair", True))
     transformer.aligncache_branch_order = ("uncond", "cond")
     _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
     if not enabled:
@@ -2065,14 +2065,14 @@ def restore_hunyuan_aligncache_state(sampler: Any, *, sample_steps: int) -> None
     pipeline = sampler.pipeline
     if not getattr(pipeline.__class__, "_aligncache_force_cfg_pair_patch_applied", False):
         def _aligncache_do_classifier_free_guidance(self):
-            return self._guidance_scale > 1 or bool(getattr(self, "_vbench_force_cfg_pair", False))
+            return self._guidance_scale > 1 or bool(getattr(self, "_aligncache_force_cfg_pair", False))
 
         pipeline.__class__.do_classifier_free_guidance = property(_aligncache_do_classifier_free_guidance)
         pipeline.__class__._aligncache_force_cfg_pair_patch_applied = True
     transformer = pipeline.transformer
     transformer.enable_aligncache = False
     transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
-    pipeline._vbench_force_cfg_pair = False
+    pipeline._aligncache_force_cfg_pair = False
     transformer.aligncache_branch_order = ("uncond", "cond")
     _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
 

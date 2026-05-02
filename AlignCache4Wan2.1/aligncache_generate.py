@@ -1214,7 +1214,7 @@ def resolve_wan_aligncache_config(
     if resolved_task not in _WAN_SUPPORTED_TASKS:
         supported = ", ".join(sorted(_WAN_SUPPORTED_TASKS))
         raise ValueError(
-            "AlignCache for Wan currently supports the vendored T2V tasks only. "
+            "AlignCache for Wan currently supports the listed T2V tasks only. "
             f"Received task={resolved_task!r}. Supported tasks: {supported}"
         )
     return _resolve_aligncache_config(
@@ -2696,13 +2696,13 @@ def configure_wan_aligncache(
     sample_steps: int,
 ) -> dict[str, Any] | None:
     model = pipeline.model
-    if not hasattr(model, "_vbench_aligncache_original_forward"):
-        model._vbench_aligncache_original_forward = model.forward
+    if not hasattr(model, "_aligncache_aligncache_original_forward"):
+        model._aligncache_aligncache_original_forward = model.forward
     enabled = str(method_name) == "aligncache"
     if enabled:
         model.forward = types.MethodType(_wan_aligncache_forward, model)
     else:
-        original_forward = getattr(model, "_vbench_aligncache_original_forward", None)
+        original_forward = getattr(model, "_aligncache_aligncache_original_forward", None)
         if original_forward is not None:
             model.forward = original_forward
     model.enable_aligncache = bool(enabled)
@@ -2736,7 +2736,7 @@ def configure_wan_aligncache(
 
 def restore_wan_aligncache_state(pipeline: Any) -> None:
     model = pipeline.model
-    original_forward = getattr(model, "_vbench_aligncache_original_forward", None)
+    original_forward = getattr(model, "_aligncache_aligncache_original_forward", None)
     if original_forward is not None:
         model.forward = original_forward
     model.enable_aligncache = False

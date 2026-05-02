@@ -2222,13 +2222,13 @@ def _iter_blocks(model: Any) -> list[Any]:
 
 def _assign_block_indices(model: Any) -> None:
     for index, block in enumerate(list(getattr(model, "spatial_blocks", []))):
-        block._vbench_block_idx = int(index)
+        block._aligncache_block_idx = int(index)
     for index, block in enumerate(list(getattr(model, "temporal_blocks", []))):
-        block._vbench_block_idx = int(index)
+        block._aligncache_block_idx = int(index)
 
 
 def _reset_pab_state(model: Any) -> None:
-    manager = getattr(model, "_vbench_pab_manager", None)
+    manager = getattr(model, "_aligncache_pab_manager", None)
     if manager is not None:
         try:
             manager._mlp_temporal_outputs.clear()
@@ -2239,14 +2239,14 @@ def _reset_pab_state(model: Any) -> None:
         except Exception:
             pass
     model.enable_pab = False
-    model._vbench_pab_manager = None
+    model._aligncache_pab_manager = None
     for block in _iter_blocks(model):
-        block._vbench_pab_manager = None
-        block._vbench_pab_attn_count = 0
-        block._vbench_pab_last_attn = None
-        block._vbench_pab_cross_count = 0
-        block._vbench_pab_last_cross = None
-        block._vbench_pab_mlp_count = 0
+        block._aligncache_pab_manager = None
+        block._aligncache_pab_attn_count = 0
+        block._aligncache_pab_last_attn = None
+        block._aligncache_pab_cross_count = 0
+        block._aligncache_pab_last_cross = None
+        block._aligncache_pab_mlp_count = 0
 
 
 def _reset_teacache_state(model: Any, *, sample_steps: int) -> None:
@@ -2458,14 +2458,14 @@ def configure_opensora_method(
     if resolved_method_name not in {"baseline", "teacache", "easycache", "aligncache", "pab"}:
         raise ValueError(f"Unsupported OpenSora acceleration method: {method_name!r}.")
 
-    if not getattr(model, "_vbench_accel_patch_applied", False):
+    if not getattr(model, "_aligncache_accel_patch_applied", False):
         model.forward = types.MethodType(_opensora_accel_forward, model)
-        model._vbench_accel_patch_applied = True
+        model._aligncache_accel_patch_applied = True
         for block in _iter_blocks(model):
-            if getattr(block, "_vbench_pab_patch_applied", False):
+            if getattr(block, "_aligncache_pab_patch_applied", False):
                 continue
             block.forward = types.MethodType(_opensora_pab_block_forward, block)
-            block._vbench_pab_patch_applied = True
+            block._aligncache_pab_patch_applied = True
     _assign_block_indices(model)
 
     _reset_teacache_state(model, sample_steps=int(sample_steps))
@@ -2508,9 +2508,9 @@ def configure_opensora_method(
         return dict(resolved)
     manager = OpenSoraPABManager(resolved, steps=int(sample_steps))
     model.enable_pab = True
-    model._vbench_pab_manager = manager
+    model._aligncache_pab_manager = manager
     for block in _iter_blocks(model):
-        block._vbench_pab_manager = manager
+        block._aligncache_pab_manager = manager
     return dict(resolved)
 
 
@@ -2810,7 +2810,7 @@ def _opensora_pab_block_forward(
 ):
     from opensora.models.layers.blocks import t2i_modulate
 
-    manager: OpenSoraPABManager | None = getattr(self, "_vbench_pab_manager", None)
+    manager: OpenSoraPABManager | None = getattr(self, "_aligncache_pab_manager", None)
     timestep_value = _extract_timestep_value(timestep)
     timestep_sequence = _normalize_timestep_sequence(all_timesteps)
 
@@ -2826,18 +2826,18 @@ def _opensora_pab_block_forward(
     broadcast_attn = False
     if manager is not None:
         if getattr(self, "temporal", False):
-            broadcast_attn, self._vbench_pab_attn_count = manager.if_broadcast_temporal(
+            broadcast_attn, self._aligncache_pab_attn_count = manager.if_broadcast_temporal(
                 timestep_value,
-                getattr(self, "_vbench_pab_attn_count", 0),
+                getattr(self, "_aligncache_pab_attn_count", 0),
             )
         else:
-            broadcast_attn, self._vbench_pab_attn_count = manager.if_broadcast_spatial(
+            broadcast_attn, self._aligncache_pab_attn_count = manager.if_broadcast_spatial(
                 timestep_value,
-                getattr(self, "_vbench_pab_attn_count", 0),
+                getattr(self, "_aligncache_pab_attn_count", 0),
             )
 
-    if manager is not None and broadcast_attn and getattr(self, "_vbench_pab_last_attn", None) is not None:
-        x_m_s = self._vbench_pab_last_attn
+    if manager is not None and broadcast_attn and getattr(self, "_aligncache_pab_last_attn", None) is not None:
+        x_m_s = self._aligncache_pab_last_attn
     else:
         x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa)
         if x_mask is not None:
@@ -2858,33 +2858,33 @@ def _opensora_pab_block_forward(
             x_m_s_zero = gate_msa_zero * x_m
             x_m_s = self.t_mask_select(x_mask, x_m_s, x_m_s_zero, T, S)
         if manager is not None:
-            self._vbench_pab_last_attn = x_m_s
+            self._aligncache_pab_last_attn = x_m_s
 
     x = x + self.drop_path(x_m_s)
 
     broadcast_cross = False
     if manager is not None:
-        broadcast_cross, self._vbench_pab_cross_count = manager.if_broadcast_cross(
+        broadcast_cross, self._aligncache_pab_cross_count = manager.if_broadcast_cross(
             timestep_value,
-            getattr(self, "_vbench_pab_cross_count", 0),
+            getattr(self, "_aligncache_pab_cross_count", 0),
         )
 
-    if manager is not None and broadcast_cross and getattr(self, "_vbench_pab_last_cross", None) is not None:
-        x = x + self._vbench_pab_last_cross
+    if manager is not None and broadcast_cross and getattr(self, "_aligncache_pab_last_cross", None) is not None:
+        x = x + self._aligncache_pab_last_cross
     else:
         x_cross = self.cross_attn(x, y, mask)
         if manager is not None:
-            self._vbench_pab_last_cross = x_cross
+            self._aligncache_pab_last_cross = x_cross
         x = x + x_cross
 
     broadcast_mlp = False
     broadcast_next = False
     skip_window = None
     if manager is not None:
-        broadcast_mlp, self._vbench_pab_mlp_count, broadcast_next, skip_window = manager.if_broadcast_mlp(
+        broadcast_mlp, self._aligncache_pab_mlp_count, broadcast_next, skip_window = manager.if_broadcast_mlp(
             timestep_value,
-            getattr(self, "_vbench_pab_mlp_count", 0),
-            block_idx=int(getattr(self, "_vbench_block_idx", 0)),
+            getattr(self, "_aligncache_pab_mlp_count", 0),
+            block_idx=int(getattr(self, "_aligncache_block_idx", 0)),
             all_timesteps=timestep_sequence,
             is_temporal=bool(getattr(self, "temporal", False)),
         )
@@ -2893,7 +2893,7 @@ def _opensora_pab_block_forward(
         x_m_s = manager.get_mlp_output(
             skip_window=skip_window,
             timestep=int(timestep_value),
-            block_idx=int(getattr(self, "_vbench_block_idx", 0)),
+            block_idx=int(getattr(self, "_aligncache_block_idx", 0)),
             is_temporal=bool(getattr(self, "temporal", False)),
         )
     else:
@@ -2911,7 +2911,7 @@ def _opensora_pab_block_forward(
         if manager is not None and broadcast_next and timestep_value is not None:
             manager.save_mlp_output(
                 timestep=int(timestep_value),
-                block_idx=int(getattr(self, "_vbench_block_idx", 0)),
+                block_idx=int(getattr(self, "_aligncache_block_idx", 0)),
                 ff_output=x_m_s,
                 is_temporal=bool(getattr(self, "temporal", False)),
             )
@@ -2930,38 +2930,53 @@ from pathlib import Path
 from pprint import pformat
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-if (_SCRIPT_DIR / "opensora").is_dir() and str(_SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(_SCRIPT_DIR))
+_LOCAL_OPENSORA_DIR = _SCRIPT_DIR / "opensora"
+if _LOCAL_OPENSORA_DIR.exists():
+    raise RuntimeError(
+        "A local OpenSora source tree was found next to aligncache_inference.py. "
+        "Remove AlignCache4OpenSora-v1.2/opensora and use an external OpenSora v1.2 checkout "
+        "installed as a package or exposed through PYTHONPATH."
+    )
 
-import colossalai
-from colossalai.cluster import DistCoordinator
-from mmengine.config import Config
-from mmengine.runner import set_random_seed
-from tqdm import tqdm
+try:
+    import colossalai
+    from colossalai.cluster import DistCoordinator
+    from mmengine.config import Config
+    from mmengine.runner import set_random_seed
+    from tqdm import tqdm
 
-from opensora.acceleration.parallel_states import set_sequence_parallel_group
-from opensora.datasets import save_sample
-from opensora.datasets.aspect import get_image_size, get_num_frames
-from opensora.models.text_encoder.t5 import text_preprocessing
-from opensora.registry import MODELS, SCHEDULERS, build_module
-from opensora.utils.config_utils import merge_args, parse_args as parse_opensora_args
-from opensora.utils.inference_utils import (
-    add_watermark,
-    append_generated,
-    append_score_to_prompts,
-    apply_mask_strategy,
-    collect_references_batch,
-    dframe_to_frame,
-    extract_json_from_prompts,
-    extract_prompts_loop,
-    get_save_path_name,
-    load_prompts,
-    merge_prompt,
-    prepare_multi_resolution_info,
-    refine_prompts_by_openai,
-    split_prompt,
-)
-from opensora.utils.misc import all_exists, create_logger, is_distributed, is_main_process, to_torch_dtype
+    from opensora.acceleration.parallel_states import set_sequence_parallel_group
+    from opensora.datasets import save_sample
+    from opensora.datasets.aspect import get_image_size, get_num_frames
+    from opensora.models.text_encoder.t5 import text_preprocessing
+    from opensora.registry import MODELS, SCHEDULERS, build_module
+    from opensora.utils.config_utils import merge_args, parse_args as parse_opensora_args
+    from opensora.utils.inference_utils import (
+        add_watermark,
+        append_generated,
+        append_score_to_prompts,
+        apply_mask_strategy,
+        collect_references_batch,
+        dframe_to_frame,
+        extract_json_from_prompts,
+        extract_prompts_loop,
+        get_save_path_name,
+        load_prompts,
+        merge_prompt,
+        prepare_multi_resolution_info,
+        refine_prompts_by_openai,
+        split_prompt,
+    )
+    from opensora.utils.misc import all_exists, create_logger, is_distributed, is_main_process, to_torch_dtype
+except ModuleNotFoundError as exc:
+    missing_name = str(getattr(exc, "name", "") or "")
+    if missing_name == "opensora" or missing_name.startswith("opensora."):
+        raise ModuleNotFoundError(
+            "OpenSora v1.2 is required but no compatible external 'opensora' package was found. "
+            "Clone https://github.com/hpcaitech/Open-Sora.git, checkout v1.2.0, then install it "
+            "or add that checkout to PYTHONPATH. See AlignCache4OpenSora-v1.2/README.md."
+        ) from exc
+    raise
 
 
 def _str2bool(value: str | bool) -> bool:
@@ -3086,12 +3101,12 @@ def _allow_local_t5_pretrained(cfg) -> None:
 
 def _find_local_pixart_vae(cfg) -> str | None:
     candidates: list[Path] = []
-    for env_var in ("ALIGNCACHE_OPENSORA_PIXART_VAE_PATH", "VBENCH_OPENSORA_PIXART_VAE_PATH"):
+    for env_var in ("ALIGNCACHE_OPENSORA_PIXART_VAE_PATH",):
         env_path = os.getenv(env_var)
         if env_path:
             candidates.append(Path(env_path).expanduser())
 
-    for env_var in ("ALIGNCACHE_CHECKPOINTS_DIR", "VBENCH_CHECKPOINTS_DIR"):
+    for env_var in ("ALIGNCACHE_CHECKPOINTS_DIR",):
         checkpoints_root = os.getenv(env_var)
         if checkpoints_root:
             candidates.append(Path(checkpoints_root).expanduser() / "pixart_sigma_sdxlvae_T5_diffusers")
