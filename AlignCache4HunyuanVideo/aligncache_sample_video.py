@@ -7,14 +7,12 @@ from typing import Any
 import torch
 
 
-_WAN_SUPPORTED_TASKS = frozenset({"t2v-1.3B", "t2v-14B"})
 _PHASES = ("early", "mid", "late")
 
 _ALIGNCACHE_DEFAULT_AGE_CAP = {"early": 5, "mid": 4, "late": 3}
 _ALIGNCACHE_DEFAULT_SCALE_INIT = {"early": 1.0, "mid": 1.0, "late": 1.0}
 _ALIGNCACHE_DEFAULT_SCALE_LOW = {"early": 0.95, "mid": 0.90, "late": 0.85}
 _ALIGNCACHE_DEFAULT_SCALE_HIGH = {"early": 1.03, "mid": 1.06, "late": 1.00}
-_ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES = {"early": 1.15, "mid": 1.00, "late": 0.80}
 _HUNYUAN_ALIGNCACHE_AGE_CAP = {"early": 6, "mid": 6, "late": 6}
 _HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 1.05, "mid": 1.20, "late": 1.35}
 _HUNYUAN_ALIGNCACHE_SCALE_INIT = {"early": 1.00, "mid": 1.00, "late": 1.00}
@@ -22,9 +20,6 @@ _HUNYUAN_ALIGNCACHE_SCALE_LOW = {"early": 0.95, "mid": 0.90, "late": 0.85}
 _HUNYUAN_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.06, "late": 1.00}
 _HUNYUAN_ALIGNCACHE_PREDICTOR_DEFAULTS = {"early_end_ratio": 0.18, "late_start_ratio": 0.72}
 _HUNYUAN_TEACACHE_COEFFICIENTS = [7.33226126e02, -4.01131952e02, 6.75869174e01, -3.14987800e00, 9.61237896e-02]
-_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 0.95, "mid": 1.15, "late": 1.00}
-_OPENSORA_ALIGNCACHE_AGE_CAP = {"early": 5, "mid": 5, "late": 4}
-_OPENSORA_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.10, "late": 1.05}
 
 _ALIGNCACHE_PREDICTOR_DEFAULTS = {
     "enable": True,
@@ -560,30 +555,6 @@ def _resolve_aligncache_config(
     return resolved
 
 
-def resolve_wan_aligncache_config(
-    *,
-    task: str,
-    method_config: dict[str, Any] | None,
-    sample_steps: int,
-) -> dict[str, Any]:
-    resolved_task = str(task)
-    if resolved_task not in _WAN_SUPPORTED_TASKS:
-        supported = ", ".join(sorted(_WAN_SUPPORTED_TASKS))
-        raise ValueError(
-            "AlignCache for Wan currently supports the vendored T2V tasks only. "
-            f"Received task={resolved_task!r}. Supported tasks: {supported}"
-        )
-    return _resolve_aligncache_config(
-        method_config=method_config,
-        sample_steps=int(sample_steps),
-        label_prefix="wan.aligncache",
-        default_thresh=0.065,
-        default_ret_steps=12,
-        default_phase_threshold_scales=_ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES,
-        default_phase_scale_profile="balanced",
-    )
-
-
 def resolve_hunyuan_aligncache_config(
     method_config: dict[str, Any] | None,
     *,
@@ -610,23 +581,6 @@ def resolve_hunyuan_aligncache_config(
     )
     resolved["force_cfg_pair"] = False if force_cfg_pair is None else bool(force_cfg_pair)
     return resolved
-
-
-def resolve_opensora_aligncache_config(
-    method_config: dict[str, Any] | None,
-    *,
-    sample_steps: int,
-) -> dict[str, Any]:
-    return _resolve_aligncache_config(
-        method_config=method_config,
-        sample_steps=int(sample_steps),
-        label_prefix="opensora.aligncache",
-        default_thresh=0.11,
-        default_ret_steps=8,
-        default_phase_threshold_scales=_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES,
-        default_age_cap=_OPENSORA_ALIGNCACHE_AGE_CAP,
-        default_scale_high=_OPENSORA_ALIGNCACHE_SCALE_HIGH,
-    )
 
 
 def _tensor_list(values: torch.Tensor | Sequence[torch.Tensor] | None) -> list[torch.Tensor] | None:

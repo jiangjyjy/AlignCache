@@ -669,15 +669,6 @@ _ALIGNCACHE_DEFAULT_SCALE_INIT = {"early": 1.0, "mid": 1.0, "late": 1.0}
 _ALIGNCACHE_DEFAULT_SCALE_LOW = {"early": 0.95, "mid": 0.90, "late": 0.85}
 _ALIGNCACHE_DEFAULT_SCALE_HIGH = {"early": 1.03, "mid": 1.06, "late": 1.00}
 _ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES = {"early": 1.15, "mid": 1.00, "late": 0.80}
-_HUNYUAN_ALIGNCACHE_AGE_CAP = {"early": 6, "mid": 6, "late": 6}
-_HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 1.05, "mid": 1.20, "late": 1.35}
-_HUNYUAN_ALIGNCACHE_SCALE_INIT = {"early": 1.00, "mid": 1.00, "late": 1.00}
-_HUNYUAN_ALIGNCACHE_SCALE_LOW = {"early": 0.95, "mid": 0.90, "late": 0.85}
-_HUNYUAN_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.06, "late": 1.00}
-_HUNYUAN_ALIGNCACHE_PREDICTOR_DEFAULTS = {"early_end_ratio": 0.18, "late_start_ratio": 0.72}
-_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES = {"early": 0.95, "mid": 1.15, "late": 1.00}
-_OPENSORA_ALIGNCACHE_AGE_CAP = {"early": 5, "mid": 5, "late": 4}
-_OPENSORA_ALIGNCACHE_SCALE_HIGH = {"early": 1.03, "mid": 1.10, "late": 1.05}
 
 _ALIGNCACHE_PREDICTOR_DEFAULTS = {
     "enable": True,
@@ -1234,51 +1225,6 @@ def resolve_wan_aligncache_config(
         default_ret_steps=12,
         default_phase_threshold_scales=_ALIGNCACHE_BALANCED_PHASE_THRESHOLD_SCALES,
         default_phase_scale_profile="balanced",
-    )
-
-
-def resolve_hunyuan_aligncache_config(
-    method_config: dict[str, Any] | None,
-    *,
-    sample_steps: int,
-) -> dict[str, Any]:
-    resolved = _resolve_aligncache_config(
-        method_config=method_config,
-        sample_steps=int(sample_steps),
-        label_prefix="hunyuan.aligncache",
-        default_thresh=0.024,
-        default_ret_steps=10,
-        default_phase_threshold_scales=_HUNYUAN_ALIGNCACHE_PHASE_THRESHOLD_SCALES,
-        default_phase_scale_profile="hunyuan",
-        default_age_cap=_HUNYUAN_ALIGNCACHE_AGE_CAP,
-        default_scale_init=_HUNYUAN_ALIGNCACHE_SCALE_INIT,
-        default_scale_low=_HUNYUAN_ALIGNCACHE_SCALE_LOW,
-        default_scale_high=_HUNYUAN_ALIGNCACHE_SCALE_HIGH,
-        default_predictor_cfg_overrides=_HUNYUAN_ALIGNCACHE_PREDICTOR_DEFAULTS,
-    )
-    raw = _normalize_aligncache_method_config(method_config)
-    force_cfg_pair = _coerce_optional_bool(
-        raw.get("force_cfg_pair", raw.get("cfg_pair")),
-        label="hunyuan.aligncache.force_cfg_pair",
-    )
-    resolved["force_cfg_pair"] = True if force_cfg_pair is None else bool(force_cfg_pair)
-    return resolved
-
-
-def resolve_opensora_aligncache_config(
-    method_config: dict[str, Any] | None,
-    *,
-    sample_steps: int,
-) -> dict[str, Any]:
-    return _resolve_aligncache_config(
-        method_config=method_config,
-        sample_steps=int(sample_steps),
-        label_prefix="opensora.aligncache",
-        default_thresh=0.11,
-        default_ret_steps=8,
-        default_phase_threshold_scales=_OPENSORA_ALIGNCACHE_PHASE_THRESHOLD_SCALES,
-        default_age_cap=_OPENSORA_ALIGNCACHE_AGE_CAP,
-        default_scale_high=_OPENSORA_ALIGNCACHE_SCALE_HIGH,
     )
 
 
@@ -2713,69 +2659,6 @@ def complete_hunyuan_aligncache_exact(
         exact_output=exact_output,
         decision=decision,
     )
-
-
-def configure_hunyuan_aligncache(
-    sampler: Any,
-    *,
-    method_name: str,
-    method_config: dict[str, Any] | None,
-    sample_steps: int,
-) -> dict[str, Any] | None:
-    from . import teacache
-
-    pipeline = sampler.pipeline
-    transformer = pipeline.transformer
-    if not getattr(transformer, "_vbench_teacache_patch_applied", False):
-        transformer.forward = types.MethodType(teacache._hunyuan_teacache_forward, transformer)
-        transformer._vbench_teacache_patch_applied = True
-
-    enabled = str(method_name) == "aligncache"
-    transformer.enable_aligncache = bool(enabled)
-    if enabled:
-        transformer.enable_teacache = False
-        transformer.enable_easycache = False
-        transformer.aligncache_cfg = resolve_hunyuan_aligncache_config(
-            method_config,
-            sample_steps=int(sample_steps),
-        )
-    else:
-        transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
-    pipeline._vbench_force_cfg_pair = bool(enabled and transformer.aligncache_cfg.get("force_cfg_pair", True))
-    transformer.aligncache_branch_order = ("uncond", "cond")
-    _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
-    if not enabled:
-        return None
-    return dict(transformer.aligncache_cfg)
-
-
-def restore_hunyuan_aligncache_state(sampler: Any, *, sample_steps: int) -> None:
-    pipeline = sampler.pipeline
-    transformer = pipeline.transformer
-    transformer.enable_aligncache = False
-    transformer.aligncache_cfg = dict(getattr(transformer, "aligncache_cfg", {}) or {})
-    pipeline._vbench_force_cfg_pair = False
-    transformer.aligncache_branch_order = ("uncond", "cond")
-    _reset_hunyuan_aligncache_runtime_state(transformer, sample_steps=max(int(sample_steps), 1))
-
-
-def configure_opensora_aligncache(
-    model: Any,
-    *,
-    enabled: bool,
-    method_config: dict[str, Any] | None,
-    sample_steps: int,
-) -> dict[str, Any] | None:
-    model.enable_aligncache = bool(enabled)
-    if enabled:
-        model.aligncache_cfg = resolve_opensora_aligncache_config(method_config, sample_steps=int(sample_steps))
-    else:
-        model.aligncache_cfg = dict(getattr(model, "aligncache_cfg", {}) or {})
-    model.aligncache_branch_order = ("cond", "uncond")
-    reset_single_aligncache_state(model, sample_steps=max(int(sample_steps), 1))
-    if not enabled:
-        return None
-    return dict(model.aligncache_cfg)
 
 
 def _reset_wan_pair_state(model: Any) -> None:
