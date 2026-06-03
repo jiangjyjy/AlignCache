@@ -17,6 +17,15 @@ SCRIPT_DEFAULTS = {
             "phase_thresholds": {"early": 0.07475, "mid": 0.065, "late": 0.052},
         },
     ),
+    "wan2.2": (
+        "AlignCache4Wan2.2/aligncache_generate.py",
+        "resolve_wan22_aligncache_config",
+        {
+            "base_thresh": 0.078,
+            "warmup_pairs": 9,
+            "phase_thresholds": {"early": 0.0897, "mid": 0.078, "late": 0.0624},
+        },
+    ),
     "hunyuan": (
         "AlignCache4HunyuanVideo/aligncache_sample_video.py",
         "resolve_hunyuan_aligncache_config",
@@ -39,6 +48,7 @@ SCRIPT_DEFAULTS = {
 
 RESOLVER_NAMES = {
     "resolve_wan_aligncache_config",
+    "resolve_wan22_aligncache_config",
     "resolve_hunyuan_aligncache_config",
     "resolve_opensora_aligncache_config",
 }
@@ -66,6 +76,8 @@ def _resolve_defaults(module, resolver_name: str) -> dict:
     resolver = getattr(module, resolver_name)
     if resolver_name == "resolve_wan_aligncache_config":
         return resolver(task="t2v-1.3B", method_config=None, sample_steps=50)
+    if resolver_name == "resolve_wan22_aligncache_config":
+        return resolver(task="t2v-A14B", method_config=None, sample_steps=40)
     return resolver(None, sample_steps=50)
 
 
@@ -82,7 +94,7 @@ def test_aligncache_default_thresholds_match_selected_experiments():
             f"aligncache_{model_name.replace('.', '_')}_defaults",
             relative_path,
             start_marker="import types\nfrom collections.abc import Sequence\nfrom typing import Any"
-            if model_name == "wan2.1"
+            if model_name in {"wan2.1", "wan2.2"}
             else None,
         )
         resolved = _resolve_defaults(module, resolver_name)
