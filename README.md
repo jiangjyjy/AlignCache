@@ -3,12 +3,18 @@
 EasyCache-style AlignCache runners:
 
 - `AlignCache4Wan2.1/`
+- `AlignCache4Wan2.2/`
 - `AlignCache4HunyuanVideo/`
 - `AlignCache4OpenSora-v1.2/`
 
 ## Structure
 
 ### `AlignCache4Wan2.1`
+
+- `aligncache_generate.py`
+- `README.md`
+
+### `AlignCache4Wan2.2`
 
 - `aligncache_generate.py`
 - `README.md`
