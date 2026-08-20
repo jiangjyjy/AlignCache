@@ -30,6 +30,17 @@ def _load_package():
 MODULE = _load_package()
 
 
+def test_comfy_q8_defaults_are_conservative_and_velocity_space_is_recorded():
+    config = MODULE.ComfyH3TraceConfig(mode="on", trace_jsonl="", summary_json="")
+
+    assert config.video_risk_threshold == 0.33
+    assert config.audio_risk_threshold == 0.165
+    assert config.max_skip_age == 4
+    assert config.start_skip_step == 5
+    assert MODULE.AlignCacheH3ComfyTrace.INPUT_TYPES()["required"]["max_skip_age"][1]["default"] == 4
+    assert MODULE.AlignCacheH3ComfyTrace.INPUT_TYPES()["required"]["start_skip_step"][1]["default"] == 5
+
+
 class _FakeDiffusionExecutor:
     def __init__(self):
         self.class_obj = SimpleNamespace(
@@ -188,8 +199,8 @@ def test_on_route_skips_one_joint_executor_call_only_after_two_exact_bootstraps(
     assert state.total_steps == 4
     assert len(run_state.records()) == 4
     assert run_state.records()[2]["transformer_ms"] == 0.0
-    torch.testing.assert_close(outputs[2][0], torch.tensor([[7.1080, 9.1350]]), rtol=1e-4, atol=1e-4)
-    torch.testing.assert_close(outputs[2][1], torch.tensor([[14.3310, 17.3680]]), rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(outputs[2][0], torch.tensor([[6.1620, 8.2160]]), rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(outputs[2][1], torch.tensor([[13.5833, 16.6543]]), rtol=1e-4, atol=1e-4)
 
     # The anchor from step 1 did not alias the input tensors mutated above.
     step_one_video_anchor = next(anchor for anchor in state.video.exact_history if anchor.step == 1)
@@ -272,6 +283,7 @@ def test_on_summary_reports_route_counts_config_and_outer_sampler_time(tmp_path)
     assert summary["route_rows"] == 4
     assert summary["timings_ms"]["denoise"] == 125.0
     assert summary["on_config"]["predictor"] == "scaled_residual_momentum"
+    assert summary["on_config"]["predictor_space"] == "velocity"
     assert summary["on_config"]["video_base_threshold"] == 1.0
     assert summary["on_config"]["audio_base_threshold"] == 1.0
     assert summary["on_config"]["age_caps"] == {"early": 1, "mid": 1, "late": 1}

@@ -177,8 +177,6 @@ def _prepare_modality_step(modality: ModalityState, current_input: torch.Tensor,
         anchor_output_scale = mean_abs(modality.exact_history[-1].model_output)
         risk_increment = gain * input_delta / max(anchor_output_scale, EPS)
 
-    # In trace mode no exact step resets this shadow budget.  Candidate budgets
-    # are rebuilt from these step increments for each historical anchor.
     modality.budget_increments[step] = risk_increment
     return _PreparedModality(input_delta=input_delta, gain=gain, risk_increment=risk_increment)
 
@@ -394,8 +392,6 @@ class AlignCacheH3TraceCollector:
                 model_output=_snapshot(audio_output),
             )
         )
-        # This reference aliases the newest anchor snapshot instead of retaining
-        # another copy of the same full target tensor.
         state.video.previous_input = pending.video_input
         state.audio.previous_input = pending.audio_input
         state.video.budget = 0.0
@@ -454,8 +450,6 @@ def build_aligncache_h3_loop_denoiser(base_denoiser_cls: type[Any]) -> type[Any]
             if i == 0:
                 self.collector.reset(resolve_actual_step_count(block_state.timesteps))
 
-            # The matching update block reads these two ephemeral attributes only
-            # after it has run the original video and audio scheduler steps.
             block_state._aligncache_h3_collector = self.collector
             block_state._aligncache_h3_step_started_at = perf_counter()
 
