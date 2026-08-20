@@ -41,12 +41,10 @@ class ComfyH3TraceConfig:
     trace_jsonl: str
     summary_json: str
     predictor: str = "scaled_residual_momentum"
-    video_risk_threshold: float = accelerate.VIDEO_RISK_THRESHOLD
-    audio_risk_threshold: float = accelerate.AUDIO_RISK_THRESHOLD
-    # Zero selects the independent Diffusers route's phase caps (5/4/3).
-    # A positive value remains available as an explicit uniform override.
-    max_skip_age: int = 0
-    start_skip_step: int = 0
+    video_risk_threshold: float = 0.33
+    audio_risk_threshold: float = 0.165
+    max_skip_age: int = 4
+    start_skip_step: int = 5
 
 
 class ComfyH3OnController(accelerate.AlignCacheH3Controller):
@@ -90,8 +88,6 @@ class ComfyH3RunState:
 
     @classmethod
     def begin(cls, config: ComfyH3TraceConfig, sigmas: Any) -> "ComfyH3RunState":
-        # A Comfy sampler normally evaluates every non-terminal sigma.  The
-        # final count is corrected from actual wrapper calls on completion.
         planned_steps = max(len(sigmas) - 1, 0)
         if config.mode == "on":
             return cls(
@@ -146,8 +142,6 @@ def _modality_timesteps(executor: Any, timestep: torch.Tensor, transformer_optio
         transformer_options.get("minimax_h3_sigma_shift_audio", getattr(model, "sigma_shift_audio", 3.0))
     )
     audio_sigma = _time_shift_sigma(video_sigma, video_shift, audio_shift)
-    # MiniMax-H3 embeds tau = 1 - sigma for each stream, not the sampler's
-    # carried video sigma itself.  The audio stream has its own shifted sigma.
     return 1.0 - video_sigma, 1.0 - audio_sigma
 
 
@@ -365,8 +359,6 @@ def make_outer_sample_wrapper(folder_paths: Any):
         if float(guider.cfg) != 1.0:
             raise ValueError("MiniMax-H3 trace/on requires CFG 1.0 so each step has one joint transformer call.")
 
-        # ``outer_sample`` receives sigmas as its fourth positional argument in
-        # ComfyUI 0.3x.  The actual wrapper count replaces this estimate at end.
         sigmas = args[3]
         run_state = ComfyH3RunState.begin(config, sigmas)
         from comfy.model_patcher import create_model_options_clone
@@ -408,10 +400,10 @@ class AlignCacheH3ComfyTrace:
                 "trace_jsonl": ("STRING", {"default": "aligncache_h3_trace.jsonl"}),
                 "summary_json": ("STRING", {"default": "aligncache_h3_summary.json"}),
                 "aligncache_predictor": (["scaled_residual_momentum"], {"default": "scaled_residual_momentum"}),
-                "video_risk_threshold": ("FLOAT", {"default": accelerate.VIDEO_RISK_THRESHOLD, "min": 0.0, "step": 0.0001}),
-                "audio_risk_threshold": ("FLOAT", {"default": accelerate.AUDIO_RISK_THRESHOLD, "min": 0.0, "step": 0.0001}),
-                "max_skip_age": ("INT", {"default": 0, "min": 0, "max": 32}),
-                "start_skip_step": ("INT", {"default": 0, "min": 0, "max": 10000}),
+                "video_risk_threshold": ("FLOAT", {"default": 0.33, "min": 0.0, "step": 0.0001}),
+                "audio_risk_threshold": ("FLOAT", {"default": 0.165, "min": 0.0, "step": 0.0001}),
+                "max_skip_age": ("INT", {"default": 4, "min": 0, "max": 32}),
+                "start_skip_step": ("INT", {"default": 5, "min": 0, "max": 10000}),
             }
         }
 
@@ -426,10 +418,10 @@ class AlignCacheH3ComfyTrace:
         trace_jsonl: str,
         summary_json: str,
         aligncache_predictor: str = "scaled_residual_momentum",
-        video_risk_threshold: float = 0.0,
-        audio_risk_threshold: float = 0.0,
-        max_skip_age: int = 1,
-        start_skip_step: int = 0,
+        video_risk_threshold: float = 0.33,
+        audio_risk_threshold: float = 0.165,
+        max_skip_age: int = 4,
+        start_skip_step: int = 5,
     ):
         if aligncache_mode not in {"off", "trace", "on"}:
             raise ValueError("MiniMax-H3 supports only 'off', 'trace', and experimental 'on'.")

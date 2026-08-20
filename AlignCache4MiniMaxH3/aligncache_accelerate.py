@@ -22,14 +22,15 @@ except ImportError:
 
 
 PHASES = ("early", "mid", "late")
-VIDEO_RISK_THRESHOLD = 0.40
-AUDIO_RISK_THRESHOLD = 0.20
+VIDEO_RISK_THRESHOLD = 0.33
+AUDIO_RISK_THRESHOLD = 0.165
 WARMUP_STEPS = 2
 TAIL_STEPS = 1
+START_SKIP_STEP = 5
 EARLY_END_RATIO = 0.15
 LATE_START_RATIO = 0.86
 PHASE_THRESHOLD_SCALES = (1.15, 1.00, 0.80)
-PHASE_AGE_CAPS = (5, 4, 3)
+PHASE_AGE_CAPS = (4, 4, 4)
 MAX_SKIP_AGE = max(PHASE_AGE_CAPS)
 
 
@@ -45,7 +46,7 @@ class AlignCacheH3Config:
     audio_base_threshold: float = AUDIO_RISK_THRESHOLD
     warmup_steps: int = WARMUP_STEPS
     tail_steps: int = TAIL_STEPS
-    start_skip_step: int = 0
+    start_skip_step: int = START_SKIP_STEP
     early_end_ratio: float = EARLY_END_RATIO
     late_start_ratio: float = LATE_START_RATIO
     phase_threshold_scales: tuple[float, float, float] = PHASE_THRESHOLD_SCALES
@@ -108,6 +109,7 @@ class AlignCacheH3Config:
     def as_dict(self) -> dict[str, Any]:
         return {
             "predictor": "scaled_residual_momentum",
+            "predictor_space": "velocity",
             "video_base_threshold": float(self.video_base_threshold),
             "audio_base_threshold": float(self.audio_base_threshold),
             "warmup_steps": int(self.warmup_steps),
@@ -121,6 +123,7 @@ class AlignCacheH3Config:
             "age_caps": _phase_mapping(self.age_caps),
             "feedback_ratio_ema_decay": float(self.feedback_ratio_ema_decay),
             "feedback_ratio_clip": list(self.feedback_ratio_clip),
+            "feedback_error_metric": "relative_l2",
             "feedback_scale_low": _phase_mapping(self.feedback_scale_low),
             "feedback_scale_high": _phase_mapping(self.feedback_scale_high),
             "predictor_beta": _phase_mapping(self.predictor_beta),
@@ -133,9 +136,9 @@ class AlignCacheH3Config:
 class _ModalityRuntime:
     threshold_scale: dict[str, float] = field(default_factory=lambda: {phase: 1.0 for phase in PHASES})
     calibration_ratio_ema: dict[str, float] = field(default_factory=lambda: {phase: 1.0 for phase in PHASES})
-    residual_scale: dict[str, float] = field(default_factory=lambda: {phase: 1.0 for phase in PHASES})
-    residual_ratio_ema: float | None = None
-    residual_direction_ema: float | None = None
+    velocity_scale: dict[str, float] = field(default_factory=lambda: {phase: 1.0 for phase in PHASES})
+    velocity_ratio_ema: float | None = None
+    velocity_direction_ema: float | None = None
     feedback_updates: int = 0
     feedback_skipped: int = 0
     last_feedback: dict[str, Any] = field(default_factory=dict)
@@ -219,9 +222,6 @@ class AlignCacheH3Controller:
     ) -> ModalityRisk:
         latest_anchor = modality.exact_history[-1]
         previous_anchor = modality.exact_history[-2]
-        # FP8 model outputs do not implement CUDA subtraction directly. Risk
-        # statistics are controller-side calculations, so promote operands
-        # before arithmetic while leaving cached tensors at their source dtype.
         input_delta = core.mean_abs(
             current_input.detach().to(torch.float32)
             - modality.previous_input.detach().to(torch.float32)
@@ -387,8 +387,16 @@ class AlignCacheH3Controller:
             f"shape {tuple(current_input.shape)}."
         )
 
-    def _anchor_residual(self, anchor: core.ExactAnchor) -> torch.Tensor:
-        return anchor.model_output.detach().to(torch.float32) - anchor.model_input.detach().to(torch.float32)
+    def _anchor_velocity(self, anchor: core.ExactAnchor) -> torch.Tensor:
+        """Return an H3 model velocity in the model's own output space.
+
+        MiniMax-H3 runs through ComfyUI's FLOW_AV sampler.  Its diffusion
+        model output is a velocity and the sampler applies the sigma-dependent
+        denoising transform afterwards; it is not an x0/latent tensor.  Keep
+        predictor arithmetic entirely in that velocity space.
+        """
+
+        return anchor.model_output.detach().to(torch.float32)
 
     def _subsample(self, value: torch.Tensor) -> torch.Tensor:
         stride = max(int(self.config.predictor_subsample_stride), 1)
@@ -423,20 +431,20 @@ class AlignCacheH3Controller:
         if not modality.exact_history:
             raise RuntimeError(f"MiniMax-H3 {modality_name} predictor has no exact anchor.")
         runtime = self.runtime[modality_name]
-        latest_residual = self._anchor_residual(modality.exact_history[-1])
-        predicted_residual = latest_residual * float(runtime.residual_scale[phase])
+        latest_velocity = self._anchor_velocity(modality.exact_history[-1])
+        predicted_velocity = latest_velocity * float(runtime.velocity_scale[phase])
 
         beta, ratio_tolerance, direction_minimum = self.config.predictor_params_for_phase(phase)
         if beta > 0.0 and len(modality.exact_history) >= 2:
-            previous_residual = self._anchor_residual(modality.exact_history[-2])
+            previous_velocity = self._anchor_velocity(modality.exact_history[-2])
             gate = min(
-                self._ratio_gate(runtime.residual_ratio_ema, ratio_tolerance),
-                self._direction_gate(runtime.residual_direction_ema, direction_minimum),
+                self._ratio_gate(runtime.velocity_ratio_ema, ratio_tolerance),
+                self._direction_gate(runtime.velocity_direction_ema, direction_minimum),
             )
             if gate > 1e-4:
-                predicted_residual = predicted_residual + beta * gate * (latest_residual - previous_residual)
+                predicted_velocity = predicted_velocity + beta * gate * (latest_velocity - previous_velocity)
 
-        return (current_input.detach().to(torch.float32) + predicted_residual).to(dtype=current_input.dtype)
+        return predicted_velocity.to(dtype=current_input.dtype)
 
     def build_feedback_drafts(self, decision: RouteDecision) -> tuple[torch.Tensor, torch.Tensor] | None:
         if not decision.feedback_eligible:
@@ -447,7 +455,7 @@ class AlignCacheH3Controller:
             self._build_modality_draft("audio", state.audio, decision.audio_input, decision.phase),
         )
 
-    def _fit_residual_scale(self, target: torch.Tensor, basis: torch.Tensor, default: float) -> float:
+    def _fit_velocity_scale(self, target: torch.Tensor, basis: torch.Tensor, default: float) -> float:
         target_f = target.detach().to(torch.float32).reshape(-1)
         basis_f = basis.detach().to(torch.float32).reshape(-1)
         denominator = torch.dot(basis_f, basis_f)
@@ -468,29 +476,29 @@ class AlignCacheH3Controller:
         if not modality.exact_history:
             return
         runtime = self.runtime[modality_name]
-        current_residual = exact_output.detach().to(torch.float32) - current_input.detach().to(torch.float32)
-        latest_residual = self._anchor_residual(modality.exact_history[-1])
-        fitted_scale = self._fit_residual_scale(current_residual, latest_residual, runtime.residual_scale[phase])
-        runtime.residual_scale[phase] = self._update_ema(
-            runtime.residual_scale[phase],
+        current_velocity = exact_output.detach().to(torch.float32)
+        latest_velocity = self._anchor_velocity(modality.exact_history[-1])
+        fitted_scale = self._fit_velocity_scale(current_velocity, latest_velocity, runtime.velocity_scale[phase])
+        runtime.velocity_scale[phase] = self._update_ema(
+            runtime.velocity_scale[phase],
             fitted_scale,
             self.config.predictor_scale_ema_decay,
         )
 
-        current_sub = self._subsample(current_residual)
-        latest_sub = self._subsample(latest_residual)
+        current_sub = self._subsample(current_velocity)
+        latest_sub = self._subsample(latest_velocity)
         latest_norm = torch.linalg.vector_norm(latest_sub)
         if float(latest_norm.item()) > 1e-12:
             ratio = float((torch.linalg.vector_norm(current_sub) / latest_norm).item())
-            runtime.residual_ratio_ema = self._update_ema(
-                runtime.residual_ratio_ema,
+            runtime.velocity_ratio_ema = self._update_ema(
+                runtime.velocity_ratio_ema,
                 ratio,
                 self.config.predictor_ratio_ema_decay,
             )
         direction = self._cosine(current_sub, latest_sub)
         if direction is not None:
-            runtime.residual_direction_ema = self._update_ema(
-                runtime.residual_direction_ema,
+            runtime.velocity_direction_ema = self._update_ema(
+                runtime.velocity_direction_ema,
                 direction,
                 self.config.predictor_direction_ema_decay,
             )
@@ -501,6 +509,14 @@ class AlignCacheH3Controller:
         reference_f = reference.detach().to(torch.float32)
         numerator = torch.sum((prediction_f - reference_f) ** 2, dtype=torch.float32)
         denominator = torch.sum(reference_f * reference_f, dtype=torch.float32).clamp_min(1e-12)
+        return float((numerator / denominator).item())
+
+    @staticmethod
+    def _relative_l2(prediction: torch.Tensor, reference: torch.Tensor) -> float:
+        prediction_f = prediction.detach().to(torch.float32)
+        reference_f = reference.detach().to(torch.float32)
+        numerator = torch.linalg.vector_norm(prediction_f - reference_f)
+        denominator = torch.linalg.vector_norm(reference_f).clamp_min(1e-12)
         return float((numerator / denominator).item())
 
     def _update_feedback(
@@ -515,7 +531,7 @@ class AlignCacheH3Controller:
         if draft is None or risk.budget is None:
             runtime.feedback_skipped += 1
             return None
-        observed_error = self._relative_mse(draft, exact_output)
+        observed_error = self._relative_l2(draft, exact_output)
         calibration_ratio = observed_error / max(float(risk.budget), float(self.config.score_eps))
         clip_low, clip_high = self.config.feedback_ratio_clip
         clipped_ratio = self._clamp(calibration_ratio, clip_low, clip_high)
@@ -534,7 +550,8 @@ class AlignCacheH3Controller:
         runtime.feedback_updates += 1
         runtime.last_feedback = {
             "phase": phase,
-            "observed_relative_mse": observed_error,
+            "observed_relative_l2": observed_error,
+            "error_metric": "relative_l2",
             "calibration_ratio": calibration_ratio,
             "clipped_ratio": clipped_ratio,
             "ratio_ema": ratio_ema,
@@ -633,9 +650,9 @@ class AlignCacheH3Controller:
             name: {
                 "threshold_scale": dict(runtime.threshold_scale),
                 "calibration_ratio_ema": dict(runtime.calibration_ratio_ema),
-                "residual_scale": dict(runtime.residual_scale),
-                "residual_ratio_ema": runtime.residual_ratio_ema,
-                "residual_direction_ema": runtime.residual_direction_ema,
+                "velocity_scale": dict(runtime.velocity_scale),
+                "velocity_ratio_ema": runtime.velocity_ratio_ema,
+                "velocity_direction_ema": runtime.velocity_direction_ema,
                 "feedback_updates": int(runtime.feedback_updates),
                 "feedback_skipped": int(runtime.feedback_skipped),
                 "last_feedback": dict(runtime.last_feedback),

@@ -59,7 +59,10 @@ class _FakeBaseSchedulerStep:
 
 
 def test_wan_style_route_keeps_warmup_tail_and_age_refresh_joint_while_advancing_both_schedulers():
-    denoiser_cls = MODULE.build_aligncache_h3_loop_denoiser(_FakeBaseDenoiser)
+    denoiser_cls = MODULE.build_aligncache_h3_loop_denoiser(
+        _FakeBaseDenoiser,
+        MODULE.AlignCacheH3Config(start_skip_step=0),
+    )
     scheduler_step_cls = MODULE.core.build_aligncache_h3_loop_scheduler_step(_FakeBaseSchedulerStep)
     denoiser = denoiser_cls()
     update = scheduler_step_cls()
@@ -95,6 +98,7 @@ def test_audio_budget_forces_one_joint_exact_call():
             audio_base_threshold=0.1,
             warmup_steps=0,
             tail_steps=0,
+            start_skip_step=0,
             phase_threshold_scales=(1.0, 1.0, 1.0),
             age_caps=(10, 10, 10),
         )
@@ -122,6 +126,7 @@ def test_budget_exact_updates_each_modality_feedback_scale_from_counterfactual_e
             audio_base_threshold=0.1,
             warmup_steps=0,
             tail_steps=0,
+            start_skip_step=0,
             phase_threshold_scales=(1.0, 1.0, 1.0),
             age_caps=(10, 10, 10),
             feedback_ratio_ema_decay=0.0,
@@ -151,6 +156,7 @@ def test_budget_exact_updates_each_modality_feedback_scale_from_counterfactual_e
         runtime = controller.runtime[modality_name]
         assert runtime.feedback_updates == 1
         assert runtime.threshold_scale["late"] == 0.85
+        assert record["feedback"][modality_name]["error_metric"] == "relative_l2"
 
 
 def test_skip_predictions_do_not_replace_the_two_exact_predictor_anchors():
@@ -160,6 +166,7 @@ def test_skip_predictions_do_not_replace_the_two_exact_predictor_anchors():
             audio_base_threshold=100.0,
             warmup_steps=0,
             tail_steps=0,
+            start_skip_step=0,
             phase_threshold_scales=(1.0, 1.0, 1.0),
             age_caps=(10, 10, 10),
         )
@@ -176,8 +183,11 @@ def test_skip_predictions_do_not_replace_the_two_exact_predictor_anchors():
 
     assert [anchor.step for anchor in controller.state.video.exact_history] == [0, 1]
     assert [anchor.step for anchor in controller.state.audio.exact_history] == [0, 1]
-    torch.testing.assert_close(video_draft, torch.tensor([3.0]))
-    torch.testing.assert_close(audio_draft, torch.tensor([3.0]))
+    # H3's Comfy FLOW_AV model returns velocity; the cache must return the
+    # predicted velocity directly instead of adding an x0-style residual to
+    # the current latent.
+    torch.testing.assert_close(video_draft, torch.tensor([2.0540]), rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(audio_draft, torch.tensor([2.0540]), rtol=1e-4, atol=1e-4)
 
 
 def test_fp8_exact_outputs_are_promoted_for_risk_and_keep_scheduler_dtype():
@@ -188,6 +198,7 @@ def test_fp8_exact_outputs_are_promoted_for_risk_and_keep_scheduler_dtype():
         audio_base_threshold=100.0,
         warmup_steps=0,
         tail_steps=0,
+        start_skip_step=0,
         phase_threshold_scales=(1.0, 1.0, 1.0),
         age_caps=(10, 10, 10),
     )
@@ -221,8 +232,9 @@ def test_cli_uses_the_resolved_closed_loop_defaults_not_a_mode_switch():
     args = MODULE.parse_args(["--prompt", "A test prompt.", "--output", "output/test.mp4"])
 
     assert not hasattr(args, "aligncache_mode")
-    assert MODULE.VIDEO_RISK_THRESHOLD == 0.40
-    assert MODULE.AUDIO_RISK_THRESHOLD == 0.20
+    assert MODULE.VIDEO_RISK_THRESHOLD == 0.33
+    assert MODULE.AUDIO_RISK_THRESHOLD == 0.165
     assert MODULE.PHASE_THRESHOLD_SCALES == (1.15, 1.0, 0.8)
-    assert MODULE.PHASE_AGE_CAPS == (5, 4, 3)
+    assert MODULE.PHASE_AGE_CAPS == (4, 4, 4)
     assert MODULE.AlignCacheH3Config().as_dict()["predictor"] == "scaled_residual_momentum"
+    assert MODULE.AlignCacheH3Config().as_dict()["start_skip_step"] == 5
