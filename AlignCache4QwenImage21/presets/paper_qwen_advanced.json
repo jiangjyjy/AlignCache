@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "policy": "paper",
+  "beta": 0.4,
+  "phase_scales": [0.85, 1.0, 0.85],
+  "phase_age_caps": [2, 4, 2],
+  "phase_beta_cond": [0.2, 0.4, 0.2],
+  "phase_beta_uncond": [0.2, 0.4, 0.2],
+  "feedback_scale_min": [0.8, 0.8, 0.8],
+  "feedback_scale_max": [1.0, 1.15, 1.0],
+  "feedback_decay": 0.9,
+  "feedback_ratio_bounds": [0.01, 100.0],
+  "anchor_strength": [0.0, 0.25, 0.0],
+  "anchor_cond_cap": [0.02, 0.04, 0.02],
+  "anchor_disagreement_cap": [0.01, 0.02, 0.01],
+  "max_time_gap": 0.2
+}

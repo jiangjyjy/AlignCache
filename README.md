@@ -6,6 +6,10 @@ EasyCache-style AlignCache runners:
 - `AlignCache4Wan2.2/`
 - `AlignCache4HunyuanVideo/`
 - `AlignCache4OpenSora-v1.2/`
+- [`AlignCache4QwenImage21/`](AlignCache4QwenImage21/README.md): experimental
+  ComfyUI Qwen-Image-2.1 node, trace logging, and native contract tests.
+  Includes a fixed experimental T2I workflow validated on RTX 3090: median 2.28x sampling speedup and 33.47 dB PSNR on 10 image/seed pairs.
+  The paper-adapted flow/CFG policy adds guided-MSE feedback, phase limits and unconditional anchor correction.
 
 ## Structure
 
